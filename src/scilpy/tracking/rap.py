@@ -2,7 +2,13 @@
 
 import logging
 import numpy as np
+import random
 
+from scipy.ndimage import binary_dilation
+
+from scilpy.graph.io import load_graph_sparse
+from scilpy.graph.solve import solve_dijkstra_multiple_paths, path_is_valid
+from scilpy.tracking.utils import TrackingDirection
 
 class RAP:
     def __init__(self, rap_volume, propagator):
@@ -198,3 +204,109 @@ class RAPSwitch(RAP):
             return int(v)
         except Exception:
             return int(np.round(v))
+
+
+class RAPHybrid(RAPSwitch):
+
+    # This class could probably be fused with RAPSwitch eventuallt
+
+    def __init__(self, rap_volume, propagators: dict):
+
+        # Graph entries are stored as strings in the propagators dict
+        # (ex. "graph.npz") while ODF propagators are stored as 
+        # ODFPropagator objects
+        graph_entries = {k: v for k, v in propagators.items()
+                     if isinstance(v, str)}
+        odf_propagators = {k: v for k, v in propagators.items()
+                     if k not in graph_entries}    
+        
+        super().__init__(rap_volume, odf_propagators)
+
+        # Right now we assume that only one graph is provided.
+        # Multiple regions can have a graph label, as long as all 
+        # regions are associated to the same graph file.
+
+        self.graph_labels = {int(k) for k in graph_entries}
+        graph_file = next(iter(graph_entries.values()))
+
+        self.csr, self.node_to_voxel, self.voxel_to_node, self.nodes_mask, _, self.peak_dirs = load_graph_sparse(graph_file)
+        self.exit_mask = self._get_exit_mask()
+
+    def rap_multistep_propagate(self, line, prev_direction):
+        label = self._get_label(line[-1], self.propagator.space,
+                                self.propagator.origin)
+        if label in self.graph_labels:
+            return self._graph_step(line, prev_direction)
+        return super().rap_multistep_propagate(line, prev_direction)
+
+    def _graph_step(self, line, prev_direction):
+        pos = line[-1]
+        pos_round = np.round(pos).astype(int)
+
+        peak_dirs_at_pos = self.peak_dirs[tuple(pos_round)]
+
+        # Get most likely node in the voxel depending on where we come from
+        max_dot = 0
+        max_idx = 0
+        for i, peak_dir in enumerate(peak_dirs_at_pos):
+            dir_norm = np.linalg.norm(peak_dir, axis=-1, keepdims=True)
+            if dir_norm < 1e-6:
+                continue
+            peak_dir = peak_dir / dir_norm
+            dot = np.dot(peak_dir, prev_direction)
+            if abs(dot) > max_dot:
+                max_dot = abs(dot)
+                max_idx = i
+
+        start_node = self.voxel_to_node[pos_round[0], pos_round[1], pos_round[2], max_idx]
+        
+        # TODO Find another way to choose the path
+        # This is temporary
+        #
+        # We take the 10 most likely paths starting from 
+        # start_node. We filter out the "impossible" paths and 
+        # randomly select one of the "possible" paths
+        paths = solve_dijkstra_multiple_paths(self.csr,
+                                              self.voxel_to_node, self.nodes_mask, 
+                                              node_to_voxel=self.node_to_voxel, 
+                                              start_node=start_node, 
+                                              exit_mask=self.exit_mask,
+                                              nb_paths=10)       
+        candidate_paths = []
+        candidate_endpoints = []
+        for path in paths:
+            if path is None: 
+                continue
+            path_voxel_lobe = [self.node_to_voxel[p] for p in path]
+            path_voxel = [p[:3] for p in path_voxel_lobe]
+            if path_is_valid(path_voxel):
+                candidate_paths.append(np.array(path_voxel, dtype=np.float32))
+                candidate_endpoints.append(path_voxel_lobe[-1])
+
+        if len(candidate_paths) == 0:
+            return line, prev_direction, False
+
+        # Randomly select a path and it's corresponding endpoint
+        chosen_idx = random.randrange(len(candidate_paths))
+        chosen_path = candidate_paths[chosen_idx]
+        chosen_endpoint = candidate_endpoints[chosen_idx]
+
+        endpoint_dir = self.peak_dirs[tuple(chosen_endpoint)]
+        endpoint_dir = endpoint_dir / np.linalg.norm(endpoint_dir, axis=-1, keepdims=True)
+        seg = chosen_path[-1] - chosen_path[-2]
+
+        if np.dot(endpoint_dir, seg) < 0:
+            endpoint_dir = -endpoint_dir
+
+        # Endpoint directions needs to be of type TrackingDirection
+        ind = self.propagator.sphere.find_closest(endpoint_dir)
+        new_dir = TrackingDirection(self.propagator.sphere.vertices[ind], ind)
+        
+        line.extend(chosen_path)
+        return line, new_dir, True
+
+    def _get_exit_mask(self):
+        footprint = np.ones((5, 5, 5), dtype=bool)
+        expanded_mask = binary_dilation(self.nodes_mask, structure=footprint)
+        exit_mask = expanded_mask & ~self.nodes_mask
+        return exit_mask

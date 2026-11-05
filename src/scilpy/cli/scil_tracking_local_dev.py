@@ -77,7 +77,7 @@ from scilpy.io.utils import (add_processes_arg, add_sphere_arg,
                              assert_outputs_exist, load_matrix_in_any_format,
                              parse_sh_basis_arg, verify_compression_th)
 from scilpy.tracking.propagator import ODFPropagator
-from scilpy.tracking.rap import RAPContinue, RAPSwitch
+from scilpy.tracking.rap import RAPContinue, RAPSwitch, RAPHybrid
 from scilpy.tracking.seed import CustomSeedsDispenser, SeedGenerator
 from scilpy.tracking.tracker import Tracker
 from scilpy.tracking.utils import (add_mandatory_options_tracking,
@@ -338,6 +338,7 @@ def main():
         propagators = {}
         loaded_datasets = {}
         prev_res = None
+        graph_tracking = False
         for label, cfg in rap_params.get('methods', {}).items():
             if cfg.get('propagator').lower() == 'odf':
                 filename = cfg['filename']
@@ -377,6 +378,9 @@ def main():
                     args.sf_threshold_init, theta, args.sphere,
                     sub_sphere=args.sub_sphere, space=our_space,
                     origin=our_origin, is_legacy=is_legacy)
+            elif cfg.get('propagator').lower() == 'graph':
+                propagators[label] = cfg['filename']
+                graph_tracking = True
             else:
                 raise ValueError(
                     f"Unknown propagator type '{cfg.get('propagator')}"
@@ -417,7 +421,10 @@ def main():
     if args.rap_method == "continue":
         rap = RAPContinue(rap_volume, propagator, step_size=vox_step_size)
     elif args.rap_method == "switch":
-        rap = RAPSwitch(rap_volume, propagators)
+        if graph_tracking is True:
+            rap = RAPHybrid(rap_volume, propagators)
+        else:
+            rap = RAPSwitch(rap_volume, propagators)
     else:
         rap = None
 
