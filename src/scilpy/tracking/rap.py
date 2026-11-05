@@ -210,7 +210,7 @@ class RAPSwitch(RAP):
 
 class RAPHybrid(RAPSwitch):
 
-    # This class could probably be fused with RAPSwitch eventuallt
+    # This class could probably be fused with RAPSwitch eventually
 
     def __init__(self, rap_volume, propagators: dict):
 
@@ -233,7 +233,14 @@ class RAPHybrid(RAPSwitch):
 
         self.csr, self.node_to_voxel, self.voxel_to_node, self.nodes_mask, _, self.peak_dirs = load_graph_sparse(
             graph_file)
+        
         self.exit_mask = self._get_exit_mask()
+        self.perimeter_mask = self._get_perimeter_mask()
+
+        self.valid_paths = {}
+        self.valid_endpoints = {}
+
+        self._precompute_valid_paths()
 
     def rap_multistep_propagate(self, line, prev_direction):
         label = self._get_label(line[-1], self.propagator.space,
@@ -264,28 +271,8 @@ class RAPHybrid(RAPSwitch):
         start_node = self.voxel_to_node[pos_round[0],
                                         pos_round[1], pos_round[2], max_idx]
 
-        # TODO Find another way to choose the path
-        # This is temporary
-        #
-        # We take the 10 most likely paths starting from
-        # start_node. We filter out the "impossible" paths and
-        # randomly select one of the "possible" paths
-        paths = solve_dijkstra_multiple_paths(self.csr,
-                                              self.voxel_to_node, self.nodes_mask,
-                                              node_to_voxel=self.node_to_voxel,
-                                              start_node=start_node,
-                                              exit_mask=self.exit_mask,
-                                              nb_paths=10)
-        candidate_paths = []
-        candidate_endpoints = []
-        for path in paths:
-            if path is None:
-                continue
-            path_voxel_lobe = [self.node_to_voxel[p] for p in path]
-            path_voxel = [p[:3] for p in path_voxel_lobe]
-            if path_is_valid(path_voxel):
-                candidate_paths.append(np.array(path_voxel, dtype=np.float32))
-                candidate_endpoints.append(path_voxel_lobe[-1])
+        candidate_paths = self.valid_paths[start_node]
+        candidate_endpoints = self.valid_endpoints[start_node]
 
         if len(candidate_paths) == 0:
             return line, prev_direction, False
@@ -315,3 +302,39 @@ class RAPHybrid(RAPSwitch):
         expanded_mask = binary_dilation(self.nodes_mask, structure=footprint)
         exit_mask = expanded_mask & ~self.nodes_mask
         return exit_mask
+
+    def _get_perimeter_mask(self):
+        footprint = np.ones((3, 3, 3), dtype=bool)
+        exit_dilated = binary_dilation(self.exit_mask, structure=footprint)
+        perimeter_mask = exit_dilated & self.nodes_mask
+        return perimeter_mask
+
+    def _precompute_valid_paths(self):
+        for voxel in np.argwhere(self.perimeter_mask):
+            for node in self.voxel_to_node[tuple(voxel)]:
+                # TODO Find another way to choose the path
+                # This is temporary
+                #
+                # We take the 10 most likely paths starting from
+                # start_node. We filter out the "impossible" paths and
+                # randomly select one of the "possible" paths
+                paths = solve_dijkstra_multiple_paths(self.csr,
+                                      self.voxel_to_node, self.nodes_mask,
+                                      node_to_voxel=self.node_to_voxel,
+                                      start_node=node,
+                                      exit_mask=self.exit_mask,
+                                      nb_paths=10)
+
+                candidate_paths = []
+                candidate_endpoints = []
+                for path in paths:
+                    if path is None:
+                        continue
+                    path_voxel_lobe = [self.node_to_voxel[p] for p in path]
+                    path_voxel = [p[:3] for p in path_voxel_lobe]
+                    if path_is_valid(path_voxel):
+                        candidate_paths.append(np.array(path_voxel, dtype=np.float32))
+                        candidate_endpoints.append(path_voxel_lobe[-1])
+
+                self.valid_paths[node] = candidate_paths
+                self.valid_endpoints[node] = candidate_endpoints
