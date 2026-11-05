@@ -48,13 +48,14 @@ def build_sparse_array(nodes_mask, sh, sh_basis, is_legacy, threshold, nufo, wm_
         Peak direction of each node.
         peak_dirs[x, y, z, direction_index] = [i, j ,k]
     """
-    
+
     # Create a mask that will include neighboring voxels of nodes with a graph label
     footprint = np.ones((5, 5, 5), dtype=bool)
     expanded_mask = binary_dilation(nodes_mask, structure=footprint)
 
     sphere = get_sphere()
-    bingham_metrics = sh_to_bingham(sh, sphere, mask=expanded_mask, max_search_angle=45, sh_basis=sh_basis, legacy=is_legacy, npeaks=nufo)
+    bingham_metrics = sh_to_bingham(
+        sh, sphere, mask=expanded_mask, max_search_angle=45, sh_basis=sh_basis, legacy=is_legacy, npeaks=nufo)
     bingham_params = bingham_metrics.model_params
 
     peak_dirs = bingham_metrics.peak_dirs
@@ -68,7 +69,8 @@ def build_sparse_array(nodes_mask, sh, sh_basis, is_legacy, threshold, nufo, wm_
 
     n_nodes = int(expanded_mask.sum()) * nufo
 
-    voxel_to_node = np.full_like(bingham_metrics.fd_lobe[:, :, :, :nufo], -1, dtype=np.int32)
+    voxel_to_node = np.full_like(
+        bingham_metrics.fd_lobe[:, :, :, :nufo], -1, dtype=np.int32)
     node_to_voxel = np.zeros((n_nodes, 4), dtype=int)
 
     node_count = 0
@@ -89,8 +91,9 @@ def build_sparse_array(nodes_mask, sh, sh_basis, is_legacy, threshold, nufo, wm_
             voxel, voxel_to_node=voxel_to_node)
         for node in nodes:
             for i, neighbor in enumerate(neighbors):
-                w = _compute_weight_bingham(node, neighbor, directions[i], sphere, wm_mask, bingham_params, node_to_voxel)
-                # w = _compute_weight_peaks(node, neighbor, node_to_voxel=node_to_voxel, 
+                w = _compute_weight_bingham(
+                    node, neighbor, directions[i], sphere, wm_mask, bingham_params, node_to_voxel)
+                # w = _compute_weight_peaks(node, neighbor, node_to_voxel=node_to_voxel,
                 #                     peak_dirs=peak_dirs, peak_values=peak_values)
                 if w >= threshold:
                     rows[count] = node
@@ -98,7 +101,8 @@ def build_sparse_array(nodes_mask, sh, sh_basis, is_legacy, threshold, nufo, wm_
                     # We will later want to minimize the path weight
                     weights[count] = 1/w
                     count = count + 1
-        print(f"\r{count}/{n_edges}  ({100*count/n_edges:.1f}%)", end="", flush=True)
+        print(f"\r{count}/{n_edges}  ({100*count/n_edges:.1f}%)",
+              end="", flush=True)
 
     n_total = int(voxel_to_node.max()) + 1
 
@@ -116,7 +120,7 @@ def build_sparse_array(nodes_mask, sh, sh_basis, is_legacy, threshold, nufo, wm_
 
 
 def _compute_weight_peaks(start_node, connected_node, node_to_voxel, peak_dirs, peak_values):
-    # Returns the dot product of the node's peak directions, multiplied by their amplitude 
+    # Returns the dot product of the node's peak directions, multiplied by their amplitude
     start_voxel = node_to_voxel[start_node]
     start_dir = peak_dirs[tuple(start_voxel)]
     start_val = peak_values[tuple(start_voxel)]
@@ -126,7 +130,7 @@ def _compute_weight_peaks(start_node, connected_node, node_to_voxel, peak_dirs, 
     connected_val = peak_values[tuple(connected_voxel)]
 
     w = np.abs(np.dot(start_dir * start_val, connected_dir * connected_val))
-    
+
     return w
 
 
@@ -136,7 +140,7 @@ def _compute_weight_bingham(start, end, direction, sphere, wm_mask, bingham_para
     vox_start = node_to_voxel[start]
     vox_end = node_to_voxel[end]
 
-    if wm_mask is not None: 
+    if wm_mask is not None:
         # Probability of both nodes being in the white matter
         pmat_start = wm_mask[tuple(vox_start[:3])]
         pmat_end = wm_mask[tuple(vox_end[:3])]
@@ -148,15 +152,15 @@ def _compute_weight_bingham(start, end, direction, sphere, wm_mask, bingham_para
     # Reconstruct ODF lobe corresponding to the node
     lobe_params_end = bingham_params[tuple(vox_end)]
 
-    f0  = lobe_params_end[0]
-    k1  = lobe_params_end[1]
-    k2  = lobe_params_end[2]
+    f0 = lobe_params_end[0]
+    k1 = lobe_params_end[1]
+    k2 = lobe_params_end[2]
     mu1 = lobe_params_end[6:9]
     mu2 = lobe_params_end[9:12]
 
     sf_end = _single_bingham_to_sf(f0, k1, k2, mu1, mu2, sphere.vertices)
 
-    # Define a cone to calculate the alignments of the ODFs  
+    # Define a cone to calculate the alignments of the ODFs
     dir_norm = np.linalg.norm(direction, axis=-1, keepdims=True)
     direction /= dir_norm
 
@@ -184,7 +188,7 @@ def _get_neighbors(voxel, voxel_to_node):
 
                 neighbor_voxel = [nx, ny, nz]
                 neighbor_nodes = voxel_to_node[tuple(neighbor_voxel)]
-                
+
                 for neighbor_node in neighbor_nodes:
                     if neighbor_node != -1:
                         neighbors.append(neighbor_node)
@@ -195,11 +199,11 @@ def _get_neighbors(voxel, voxel_to_node):
 def _normalize_graph(coo, csr):
     # We want to keep all weights below 0.5
     row_max = np.zeros(csr.shape[0], dtype=csr.dtype)
-    np.maximum.at(row_max, coo.row, coo.data)   
+    np.maximum.at(row_max, coo.row, coo.data)
 
     # Avoid division by 0
     scale = scale = 0.5 / np.clip(row_max, a_min=1e-10, a_max=None)
-    csr_norm = diags(scale) @ csr   
+    csr_norm = diags(scale) @ csr
 
     # Edge weight = weight(A -> B) + weight(B -> A)
     csr = csr_norm + csr_norm.T

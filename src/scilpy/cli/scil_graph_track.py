@@ -15,13 +15,14 @@ Seeds from the perimeter of the graph region.
 This is temporary.
 """
 
+
 def _build_arg_parser():
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
     )
     p.add_argument("in_graph",
                    help="Graph file (.npz file)")
-    p.add_argument("out_tractogram", 
+    p.add_argument("out_tractogram",
                    help="Output file name (.trk file)")
     return p
 
@@ -30,7 +31,8 @@ def main():
     parser = _build_arg_parser()
     args = parser.parse_args()
 
-    csr, node_to_voxel, voxel_to_node, nodes_mask, affine = load_graph_sparse(args.in_graph)
+    csr, node_to_voxel, voxel_to_node, nodes_mask, affine, peak_dirs = load_graph_sparse(
+        args.in_graph)
 
     # Create seeding and exit masks
     footprint_3 = np.ones((3, 3, 3), dtype=bool)
@@ -43,19 +45,19 @@ def main():
     perimeter_mask = exit_dilated & nodes_mask
 
     nib.save(nib.Nifti1Image(exit_mask.astype(np.uint8), affine),
-                 "exit_mask.nii.gz")
+             "exit_mask.nii.gz")
 
     nib.save(nib.Nifti1Image(perimeter_mask.astype(np.uint8), affine),
-                 "perimeter_mask.nii.gz")
+             "perimeter_mask.nii.gz")
 
     streamlines = []
 
     # Create streamlines starting from each node in the perimeter of the graph
     for voxel in np.argwhere(perimeter_mask):
         for node in voxel_to_node[tuple(voxel)]:
-            paths = solve_dijkstra_multiple_paths(csr, voxel_to_node, nodes_mask, 
-                                                  node_to_voxel=node_to_voxel, 
-                                                  start_node = node, 
+            paths = solve_dijkstra_multiple_paths(csr, voxel_to_node, nodes_mask,
+                                                  node_to_voxel=node_to_voxel,
+                                                  start_node=node,
                                                   exit_mask=exit_mask,
                                                   nb_paths=10)
             for path in paths:

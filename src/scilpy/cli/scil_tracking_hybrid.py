@@ -18,20 +18,21 @@ This is temporary.
 Does not use other scilpy functions or classes such as Tracker or Propagator. 
 """
 
+
 def _build_arg_parser():
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
     )
-    p.add_argument("in_fodf", 
+    p.add_argument("in_fodf",
                    help="fODFs (.nii.gz file)")
     p.add_argument("in_graph",
                    help="Graph file (.npz file)")
-    p.add_argument("in_wm_mask", 
+    p.add_argument("in_wm_mask",
                    help="White matter mask (.nii.gz file)")
-    p.add_argument("out_tractogram", 
+    p.add_argument("out_tractogram",
                    help="Output file name (.trk file)")
     p.add_argument("--npv",
-                   help="Number of seeds per voxel", 
+                   help="Number of seeds per voxel",
                    type=int,
                    default=1)
     return p
@@ -49,14 +50,15 @@ def main():
 
     voxres = fodfs.header.get_zooms()[:3]
 
-    csr, node_to_voxel, voxel_to_node, nodes_mask, affine, peak_dirs = load_graph_sparse(args.in_graph)
+    csr, node_to_voxel, voxel_to_node, nodes_mask, affine, peak_dirs = load_graph_sparse(
+        args.in_graph)
 
     # Create seeding mask
     # For now, we avoid seeding in the graph
     seed_mask = wm_mask & ~nodes_mask
 
     nib.save(nib.Nifti1Image(seed_mask.astype(np.uint8), affine),
-                 "seed_mask.nii.gz")
+             "seed_mask.nii.gz")
 
     exit_mask = get_exit_mask(nodes_mask)
 
@@ -73,20 +75,22 @@ def main():
     nb_seed = np.sum(seed_mask)
     for seed in np.argwhere(seed_mask):
         for i in range(args.npv):
-            line = get_line_from_seed(seed, nodes_mask, voxres, peak_dirs, csr, node_to_voxel, voxel_to_node, wm_mask, sh, B, dirs, cos_theta, exit_mask)
+            line = get_line_from_seed(seed, nodes_mask, voxres, peak_dirs, csr,
+                                      node_to_voxel, voxel_to_node, wm_mask, sh, B, dirs, cos_theta, exit_mask)
             if line is not None:
                 streamlines.append(line)
         count += 1
-        print(f"\r{count}/{nb_seed}  ({100*count/nb_seed:.1f}%)", end="", flush=True)
-    
+        print(f"\r{count}/{nb_seed}  ({100*count/nb_seed:.1f}%)",
+              end="", flush=True)
+
     our_space = Space.VOX
     our_origin = Origin('center')
-    
+
     sft = StatefulTractogram(streamlines, wm,
                              space=our_space, origin=our_origin)
 
     sft.remove_invalid_streamlines()
-    
+
     save_tractogram(sft, args.out_tractogram, bbox_valid_check=False)
 
 
@@ -94,7 +98,8 @@ def get_line_from_seed(seed, nodes_mask, voxres, peak_dirs, csr, node_to_voxel, 
     d0 = _get_initial_direction(seed, sh, B, dirs)
 
     # Forward
-    line = _propagate([seed], d0, nodes_mask, voxres, peak_dirs, csr, node_to_voxel, voxel_to_node, wm_mask, sh, B, dirs, cos_theta, exit_mask)
+    line = _propagate([seed], d0, nodes_mask, voxres, peak_dirs, csr,
+                      node_to_voxel, voxel_to_node, wm_mask, sh, B, dirs, cos_theta, exit_mask)
 
     if line is None:
         return None
@@ -102,12 +107,14 @@ def get_line_from_seed(seed, nodes_mask, voxres, peak_dirs, csr, node_to_voxel, 
     line.reverse()
 
     # Backward
-    line = _propagate(line, -d0, nodes_mask, voxres, peak_dirs, csr, node_to_voxel, voxel_to_node, wm_mask, sh, B, dirs, cos_theta, exit_mask)
+    line = _propagate(line, -d0, nodes_mask, voxres, peak_dirs, csr,
+                      node_to_voxel, voxel_to_node, wm_mask, sh, B, dirs, cos_theta, exit_mask)
 
     if line is None or length(np.array(line)) * voxres[0] < min_length:
         return None
-    
+
     return line
+
 
 def _get_initial_direction(pos, sh, B, dirs, sf_threshold_init=0.5):
     sf = sh[tuple(np.round(pos).astype(int))] @ B
@@ -123,10 +130,10 @@ def _propagate(line, initial_direction, nodes_mask, voxres, peak_dirs, csr, node
     prev_dir = initial_direction
     prev_dir /= np.linalg.norm(prev_dir, axis=-1, keepdims=True)
 
-    # We use a cooldown to make sure that the streamline doesn't 
+    # We use a cooldown to make sure that the streamline doesn't
     # immediately go back into a graph region right after exiting.
     cooldown = 0
-    
+
     while length(np.array(line)) * voxres[0] < max_length:
         pos = line[-1]
 
@@ -151,11 +158,12 @@ def _propagate(line, initial_direction, nodes_mask, voxres, peak_dirs, csr, node
                     max_dot = abs(dot)
                     max_idx = i
 
-            start_node = voxel_to_node[pos_round[0], pos_round[1], pos_round[2], max_idx]
+            start_node = voxel_to_node[pos_round[0],
+                                       pos_round[1], pos_round[2], max_idx]
             paths = solve_dijkstra_multiple_paths(csr,
-                                                  voxel_to_node, nodes_mask, 
-                                                  node_to_voxel=node_to_voxel, 
-                                                  start_node=start_node, 
+                                                  voxel_to_node, nodes_mask,
+                                                  node_to_voxel=node_to_voxel,
+                                                  start_node=start_node,
                                                   exit_mask=exit_mask,
                                                   nb_paths=30)
 
@@ -168,7 +176,8 @@ def _propagate(line, initial_direction, nodes_mask, voxres, peak_dirs, csr, node
                 path_voxel_lobe = [node_to_voxel[p] for p in path]
                 path_voxel = [p[:3] for p in path_voxel_lobe]
                 if path_is_valid(path_voxel):
-                    candidate_paths.append(np.array(path_voxel, dtype=np.float32))
+                    candidate_paths.append(
+                        np.array(path_voxel, dtype=np.float32))
                     candidate_endpoints.append(path_voxel_lobe[-1])
 
             if len(candidate_paths) == 0:
@@ -180,7 +189,8 @@ def _propagate(line, initial_direction, nodes_mask, voxres, peak_dirs, csr, node
             chosen_endpoint = candidate_endpoints[chosen_idx]
 
             prev_dir = peak_dirs[tuple(chosen_endpoint)]
-            prev_dir = prev_dir / np.linalg.norm(prev_dir, axis=-1, keepdims=True)
+            prev_dir = prev_dir / \
+                np.linalg.norm(prev_dir, axis=-1, keepdims=True)
 
             seg = chosen_path[-1] - chosen_path[-2]
             if np.dot(prev_dir, seg) < 0:
@@ -193,8 +203,9 @@ def _propagate(line, initial_direction, nodes_mask, voxres, peak_dirs, csr, node
 
             if not wm_mask[tuple(chosen_endpoint[:3])]:
                 return line
-        else: 
-            next_dir = _get_next_direction(pos, prev_dir, sh, B, dirs, cos_theta)
+        else:
+            next_dir = _get_next_direction(
+                pos, prev_dir, sh, B, dirs, cos_theta)
             if next_dir is None:
                 return line
             next_pos = pos + step_size * next_dir
@@ -202,7 +213,7 @@ def _propagate(line, initial_direction, nodes_mask, voxres, peak_dirs, csr, node
             prev_dir = next_dir
 
             if cooldown > 0:
-                cooldown = cooldown - 1 
+                cooldown = cooldown - 1
 
             # Again, clearly there's a better way to do this
             next_pos_round = np.round(next_pos).astype(int)
@@ -220,8 +231,9 @@ def get_exit_mask(nodes_mask):
     footprint = np.ones((5, 5, 5), dtype=bool)
     expanded_mask = binary_dilation(nodes_mask, structure=footprint)
     exit_mask = expanded_mask & ~nodes_mask
-    
+
     return exit_mask
+
 
 def _get_next_direction(pos, prev_dir, sh, B, dirs, cos_theta, sf_threshold=0.1):
     sf = sh[tuple(np.round(pos).astype(int))] @ B

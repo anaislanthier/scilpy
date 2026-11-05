@@ -10,6 +10,7 @@ from scilpy.graph.io import load_graph_sparse
 from scilpy.graph.solve import solve_dijkstra_multiple_paths, path_is_valid
 from scilpy.tracking.utils import TrackingDirection
 
+
 class RAP:
     def __init__(self, rap_volume, propagator):
         """
@@ -165,7 +166,8 @@ class RAPSwitch(RAP):
             if new_propagator is not self.propagator:
                 new_propagator.line_rng_generator = self.propagator.line_rng_generator
                 self.propagator = new_propagator
-                logging.debug(f"RAP propagator switched to default label {self._propagators.keys()[0]}")
+                logging.debug(
+                    f"RAP propagator switched to default label {self._propagators.keys()[0]}")
 
         # Perform propagation with new parameters
         new_pos, new_dir, is_direction_valid = self.propagator.propagate(
@@ -213,23 +215,24 @@ class RAPHybrid(RAPSwitch):
     def __init__(self, rap_volume, propagators: dict):
 
         # Graph entries are stored as strings in the propagators dict
-        # (ex. "graph.npz") while ODF propagators are stored as 
+        # (ex. "graph.npz") while ODF propagators are stored as
         # ODFPropagator objects
         graph_entries = {k: v for k, v in propagators.items()
-                     if isinstance(v, str)}
+                         if isinstance(v, str)}
         odf_propagators = {k: v for k, v in propagators.items()
-                     if k not in graph_entries}    
-        
+                           if k not in graph_entries}
+
         super().__init__(rap_volume, odf_propagators)
 
         # Right now we assume that only one graph is provided.
-        # Multiple regions can have a graph label, as long as all 
+        # Multiple regions can have a graph label, as long as all
         # regions are associated to the same graph file.
 
         self.graph_labels = {int(k) for k in graph_entries}
         graph_file = next(iter(graph_entries.values()))
 
-        self.csr, self.node_to_voxel, self.voxel_to_node, self.nodes_mask, _, self.peak_dirs = load_graph_sparse(graph_file)
+        self.csr, self.node_to_voxel, self.voxel_to_node, self.nodes_mask, _, self.peak_dirs = load_graph_sparse(
+            graph_file)
         self.exit_mask = self._get_exit_mask()
 
     def rap_multistep_propagate(self, line, prev_direction):
@@ -258,24 +261,25 @@ class RAPHybrid(RAPSwitch):
                 max_dot = abs(dot)
                 max_idx = i
 
-        start_node = self.voxel_to_node[pos_round[0], pos_round[1], pos_round[2], max_idx]
-        
+        start_node = self.voxel_to_node[pos_round[0],
+                                        pos_round[1], pos_round[2], max_idx]
+
         # TODO Find another way to choose the path
         # This is temporary
         #
-        # We take the 10 most likely paths starting from 
-        # start_node. We filter out the "impossible" paths and 
+        # We take the 10 most likely paths starting from
+        # start_node. We filter out the "impossible" paths and
         # randomly select one of the "possible" paths
         paths = solve_dijkstra_multiple_paths(self.csr,
-                                              self.voxel_to_node, self.nodes_mask, 
-                                              node_to_voxel=self.node_to_voxel, 
-                                              start_node=start_node, 
+                                              self.voxel_to_node, self.nodes_mask,
+                                              node_to_voxel=self.node_to_voxel,
+                                              start_node=start_node,
                                               exit_mask=self.exit_mask,
-                                              nb_paths=10)       
+                                              nb_paths=10)
         candidate_paths = []
         candidate_endpoints = []
         for path in paths:
-            if path is None: 
+            if path is None:
                 continue
             path_voxel_lobe = [self.node_to_voxel[p] for p in path]
             path_voxel = [p[:3] for p in path_voxel_lobe]
@@ -292,7 +296,8 @@ class RAPHybrid(RAPSwitch):
         chosen_endpoint = candidate_endpoints[chosen_idx]
 
         endpoint_dir = self.peak_dirs[tuple(chosen_endpoint)]
-        endpoint_dir = endpoint_dir / np.linalg.norm(endpoint_dir, axis=-1, keepdims=True)
+        endpoint_dir = endpoint_dir / \
+            np.linalg.norm(endpoint_dir, axis=-1, keepdims=True)
         seg = chosen_path[-1] - chosen_path[-2]
 
         if np.dot(endpoint_dir, seg) < 0:
@@ -301,7 +306,7 @@ class RAPHybrid(RAPSwitch):
         # Endpoint directions needs to be of type TrackingDirection
         ind = self.propagator.sphere.find_closest(endpoint_dir)
         new_dir = TrackingDirection(self.propagator.sphere.vertices[ind], ind)
-        
+
         line.extend(chosen_path)
         return line, new_dir, True
 
