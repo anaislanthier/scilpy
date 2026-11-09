@@ -54,16 +54,6 @@ def solve_dijkstra_multiple_paths(graph, voxel_to_node, nodes_mask, node_to_voxe
 
     targets = []
     for voxel in np.argwhere(exit_mask):
-        # TODO remove
-        # This is temporary
-        # I use this to garantee that the streamline will not automatically exit.
-        # In the future we will need to allow the path to exit in its neighborhood.
-        if node_to_voxel is not None:
-            start_vox = node_to_voxel[start_node][:3]
-            diff = voxel - start_vox
-            # If the exit voxel is part of the start voxel's 5x5x5 neighborhood
-            if np.abs(diff).max() < 3:
-                continue
         nodes = voxel_to_node[tuple(voxel)]
         for node in nodes:
             if node != -1:

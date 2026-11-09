@@ -242,6 +242,8 @@ class RAPHybrid(RAPSwitch):
 
         self._precompute_valid_paths()
 
+        self.exit_cone_angle = np.radians(85)
+
     def rap_multistep_propagate(self, line, prev_direction):
         label = self._get_label(line[-1], self.propagator.space,
                                 self.propagator.origin)
@@ -252,6 +254,7 @@ class RAPHybrid(RAPSwitch):
     def _graph_step(self, line, prev_direction):
         pos = line[-1]
         pos_round = np.round(pos).astype(int)
+        diff_pos = pos - pos_round
 
         peak_dirs_at_pos = self.peak_dirs[tuple(pos_round)]
 
@@ -277,6 +280,22 @@ class RAPHybrid(RAPSwitch):
         if len(candidate_paths) == 0:
             return line, prev_direction, False
 
+        # Reject paths exiting inside a backward cone to avoid immediate exits.
+        axis = -np.asarray(prev_direction, dtype=float)
+        axis /= np.linalg.norm(axis)
+
+        ends = np.array([p[-1] for p in candidate_paths])  # exit voxels
+        d = ends - pos
+        dist = np.linalg.norm(d, axis=1)
+        angle = np.arccos(np.clip((d @ axis) / dist, -1, 1))
+
+        keep = angle > self.exit_cone_angle
+        candidate_paths = [p for p, k in zip(candidate_paths, keep) if k]
+        candidate_endpoints = [e for e, k in zip(candidate_endpoints, keep) if k]
+
+        if len(candidate_paths) == 0:
+            return line, prev_direction, False
+
         # Randomly select a path and it's corresponding endpoint
         chosen_idx = random.randrange(len(candidate_paths))
         chosen_path = candidate_paths[chosen_idx]
@@ -294,7 +313,10 @@ class RAPHybrid(RAPSwitch):
         ind = self.propagator.sphere.find_closest(endpoint_dir)
         new_dir = TrackingDirection(self.propagator.sphere.vertices[ind], ind)
 
-        line.extend(chosen_path)
+        corrected_path = self._correct_path(chosen_path, diff_pos)
+
+        line.extend(corrected_path)
+
         return line, new_dir, True
 
     def _get_exit_mask(self):
@@ -323,7 +345,7 @@ class RAPHybrid(RAPSwitch):
                                       node_to_voxel=self.node_to_voxel,
                                       start_node=node,
                                       exit_mask=self.exit_mask,
-                                      nb_paths=10)
+                                      nb_paths=20)
 
                 candidate_paths = []
                 candidate_endpoints = []
@@ -338,3 +360,7 @@ class RAPHybrid(RAPSwitch):
 
                 self.valid_paths[node] = candidate_paths
                 self.valid_endpoints[node] = candidate_endpoints
+
+    def _correct_path(self, path, diff):
+        new_path = [point + diff for point in path]
+        return new_path
