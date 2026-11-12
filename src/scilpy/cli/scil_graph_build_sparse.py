@@ -32,7 +32,7 @@ def _build_arg_parser():
                    help="White matter mask. (.nii.gz file)")
     p.add_argument(
         "--threshold",
-        default=0.05,
+        default=0.15,
         type=float,
         help="Cut all weights below a given threshold. [%(default)s]",
     )

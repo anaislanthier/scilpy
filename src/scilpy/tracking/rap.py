@@ -274,6 +274,9 @@ class RAPHybrid(RAPSwitch):
         start_node = self.voxel_to_node[pos_round[0],
                                         pos_round[1], pos_round[2], max_idx]
 
+        if start_node < 0: 
+            return line, prev_direction, False
+        
         candidate_paths = self.valid_paths[start_node]
         candidate_endpoints = self.valid_endpoints[start_node]
 
@@ -290,8 +293,8 @@ class RAPHybrid(RAPSwitch):
         angle = np.arccos(np.clip((d @ axis) / dist, -1, 1))
 
         keep = angle > self.exit_cone_angle
-        candidate_paths = [p for p, k in zip(candidate_paths, keep) if k]
-        candidate_endpoints = [e for e, k in zip(candidate_endpoints, keep) if k]
+        candidate_paths = [p for p, k in zip(candidate_paths, keep) if k][:5]
+        candidate_endpoints = [e for e, k in zip(candidate_endpoints, keep) if k][:5]
 
         if len(candidate_paths) == 0:
             return line, prev_direction, False
@@ -315,37 +318,38 @@ class RAPHybrid(RAPSwitch):
 
         corrected_path = self._correct_path(chosen_path, diff_pos)
 
-        line.extend(corrected_path)
+        line.extend(corrected_path[1:])
 
         return line, new_dir, True
 
     def _get_exit_mask(self):
         footprint = np.ones((5, 5, 5), dtype=bool)
-        expanded_mask = binary_dilation(self.nodes_mask, structure=footprint)
-        exit_mask = expanded_mask & ~self.nodes_mask
+        expanded_mask = binary_dilation(self.nodes_mask.astype(bool), structure=footprint)
+        exit_mask = expanded_mask & ~self.nodes_mask.astype(bool)
         return exit_mask
 
     def _get_perimeter_mask(self):
         footprint = np.ones((3, 3, 3), dtype=bool)
         exit_dilated = binary_dilation(self.exit_mask, structure=footprint)
-        perimeter_mask = exit_dilated & self.nodes_mask
+        perimeter_mask = exit_dilated & self.nodes_mask.astype(bool)
         return perimeter_mask
 
     def _precompute_valid_paths(self):
         for voxel in np.argwhere(self.perimeter_mask):
             for node in self.voxel_to_node[tuple(voxel)]:
+                if node < 0: 
+                    continue
                 # TODO Find another way to choose the path
                 # This is temporary
                 #
                 # We take the 10 most likely paths starting from
                 # start_node. We filter out the "impossible" paths and
                 # randomly select one of the "possible" paths
-                paths = solve_dijkstra_multiple_paths(self.csr,
+                paths = solve_dijkstra_multiple_paths(self.csr, self.node_to_voxel,
                                       self.voxel_to_node, self.nodes_mask,
-                                      node_to_voxel=self.node_to_voxel,
                                       start_node=node,
                                       exit_mask=self.exit_mask,
-                                      nb_paths=20)
+                                      nb_paths=40)
 
                 candidate_paths = []
                 candidate_endpoints = []
@@ -362,5 +366,7 @@ class RAPHybrid(RAPSwitch):
                 self.valid_endpoints[node] = candidate_endpoints
 
     def _correct_path(self, path, diff):
+        # This needs to be improved
+        # This can make streamlines exit the wm mask
         new_path = [point + diff for point in path]
         return new_path

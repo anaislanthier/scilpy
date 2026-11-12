@@ -4,18 +4,16 @@ from scipy.ndimage import binary_dilation
 import nibabel as nib
 
 
-def solve_dijkstra_single_path(graph, voxel_to_node, nodes_mask, start_node=None, exit_mask=None):
+def solve_dijkstra_single_path(graph, node_to_voxel, voxel_to_node, nodes_mask, start_node=None, exit_mask=None):
 
     # This is temporary
     # Finds shortest path from one node to any node in the exit mask
-    # The result is often disappointing if we don't use a precise exit mask.
-    # Exits right away most of the time
 
     # Create exit mask if not provided
     if exit_mask is None:
         footprint = np.ones((5, 5, 5), dtype=bool)
-        expanded_mask = binary_dilation(nodes_mask, structure=footprint)
-        exit_mask = expanded_mask & ~nodes_mask
+        expanded_mask = binary_dilation(nodes_mask.astype(bool), structure=footprint)
+        exit_mask = expanded_mask & ~nodes_mask.astype(bool)
 
     if start_node is None:
         start_node = _get_start_u(voxel_to_node)
@@ -34,20 +32,20 @@ def solve_dijkstra_single_path(graph, voxel_to_node, nodes_mask, start_node=None
     best_target = min(
         targets,
         key=lambda t: dist_matrix[t] /
-        _count_nodes_in_path(predecessors, start_node, t)
+        _path_length(predecessors, start_node, t, node_to_voxel)
     )
 
     path = _get_path(predecessors, start_node, best_target)
     return path
 
 
-def solve_dijkstra_multiple_paths(graph, voxel_to_node, nodes_mask, node_to_voxel=None, start_node=None, exit_mask=None, nb_paths=100):
+def solve_dijkstra_multiple_paths(graph, node_to_voxel, voxel_to_node, nodes_mask, start_node=None, exit_mask=None, nb_paths=100):
 
     # Create exit mask if not provided
     if exit_mask is None:
         footprint = np.ones((5, 5, 5), dtype=bool)
-        expanded_mask = binary_dilation(nodes_mask, structure=footprint)
-        exit_mask = expanded_mask & ~nodes_mask
+        expanded_mask = binary_dilation(nodes_mask.astype(bool), structure=footprint)
+        exit_mask = expanded_mask & ~nodes_mask.astype(bool)
 
     if start_node is None:
         start_node = _get_start_u(voxel_to_node)
@@ -70,7 +68,7 @@ def solve_dijkstra_multiple_paths(graph, voxel_to_node, nodes_mask, node_to_voxe
     scored = sorted(
         reachable,
         key=lambda t: dist_matrix[t] /
-        _count_nodes_in_path(predecessors, start_node, t)
+        _path_length(predecessors, start_node, t, node_to_voxel)
     )
 
     shortest_paths = [_get_path(predecessors, start_node, t)
@@ -78,20 +76,16 @@ def solve_dijkstra_multiple_paths(graph, voxel_to_node, nodes_mask, node_to_voxe
 
     return shortest_paths
 
-
-def _count_nodes_in_path(predecessors, start, end):
-    # Could probably be replaced by len(_get_path(predecessors, start, end))
-
-    if end == -1:
-        return 1e-6     # To avoid divisions by 0 in the functions
-    count = 1
+def _path_length(predecessors, start, end, node_to_voxel):
+    length = 0.0
     node = end
     while node != start:
         if node == -9999:
-            return 1e-6     # To avoid divisions by 0 in the functions
-        node = predecessors[node]
-        count += 1
-    return count
+            return 1e-6
+        prev = predecessors[node]
+        length += np.linalg.norm(node_to_voxel[node, :3] - node_to_voxel[prev, :3])
+        node = prev
+    return max(length, 1e-6)
 
 
 def _get_path(predecessors, start, end):
@@ -129,9 +123,10 @@ def path_is_valid(path, max_angle_deg=60):
 
 
 def _get_start_u(voxel_to_node):
-    return voxel_to_node[25, 41, 1, 0]
+    # return voxel_to_node[25, 41, 1, 0]     # fibercup 
     # return voxel_to_node[45, 43, 1, 1]
     # return voxel_to_node[17, 41, 1, 1]
+    return voxel_to_node[19, 21, 26, 1]     #  2 bundles 60 deg
 
 
 def _get_targets_u(voxel_to_node):

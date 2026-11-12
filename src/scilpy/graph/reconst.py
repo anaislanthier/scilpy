@@ -1,11 +1,11 @@
 import numpy as np
 from dipy.reconst.shm import sh_to_sf
-from dipy.core.sphere import Sphere
-from scipy.sparse import coo_array, diags
+from scipy.sparse import coo_array
 from scipy.ndimage import binary_dilation
 
 from dipy.data import get_sphere
-from dipy.reconst.bingham import sh_to_bingham, _single_bingham_to_sf
+from dipy.reconst.bingham import sf_to_bingham, _single_bingham_to_sf
+from dipy.reconst.shm import sh_to_sf, calculate_max_order
 
 
 def build_sparse_array(nodes_mask, sh, sh_basis, is_legacy, threshold, nufo, wm_mask):
@@ -51,11 +51,21 @@ def build_sparse_array(nodes_mask, sh, sh_basis, is_legacy, threshold, nufo, wm_
 
     # Create a mask that will include neighboring voxels of nodes with a graph label
     footprint = np.ones((5, 5, 5), dtype=bool)
-    expanded_mask = binary_dilation(nodes_mask, structure=footprint)
+    expanded_mask = binary_dilation(nodes_mask.astype(bool), structure=footprint)
 
-    sphere = get_sphere()
-    bingham_metrics = sh_to_bingham(
-        sh, sphere, mask=expanded_mask, max_search_angle=45, sh_basis=sh_basis, legacy=is_legacy, npeaks=nufo)
+    sphere = get_sphere(name="repulsion724")
+
+    sf = np.zeros(sh.shape[:3] + (len(sphere.vertices),))
+    sf[expanded_mask] = sh_to_sf(sh[expanded_mask], sphere,
+                                 sh_order_max=calculate_max_order(sh.shape[-1]),
+                                 basis_type=sh_basis, legacy=is_legacy)
+
+
+    sf_max = np.clip(sf.max(axis=-1, keepdims=True), 0, None)
+    sf = np.maximum(sf, 0.01 * sf_max)
+
+    bingham_metrics = sf_to_bingham(sf, sphere, 25, mask=expanded_mask,
+                                    npeaks=nufo, min_sep_angle=25)
     bingham_params = bingham_metrics.model_params
 
     peak_dirs = bingham_metrics.peak_dirs
@@ -93,9 +103,8 @@ def build_sparse_array(nodes_mask, sh, sh_basis, is_legacy, threshold, nufo, wm_
             for i, neighbor in enumerate(neighbors):
                 w = _compute_weight_bingham(
                     node, neighbor, directions[i], sphere, wm_mask, bingham_params, node_to_voxel)
-                # w = _compute_weight_peaks(node, neighbor, node_to_voxel=node_to_voxel,
-                #                     peak_dirs=peak_dirs, peak_values=peak_values)
-                if w >= threshold:
+                dist = np.linalg.norm(directions[i])
+                if w * dist >= threshold:
                     rows[count] = node
                     cols[count] = neighbor
                     # We will later want to minimize the path weight
@@ -118,23 +127,7 @@ def build_sparse_array(nodes_mask, sh, sh_basis, is_legacy, threshold, nufo, wm_
 
     return csr, node_to_voxel, voxel_to_node, peak_dirs
 
-
-def _compute_weight_peaks(start_node, connected_node, node_to_voxel, peak_dirs, peak_values):
-    # Returns the dot product of the node's peak directions, multiplied by their amplitude
-    start_voxel = node_to_voxel[start_node]
-    start_dir = peak_dirs[tuple(start_voxel)]
-    start_val = peak_values[tuple(start_voxel)]
-
-    connected_voxel = node_to_voxel[connected_node]
-    connected_dir = peak_dirs[tuple(connected_voxel)]
-    connected_val = peak_values[tuple(connected_voxel)]
-
-    w = np.abs(np.dot(start_dir * start_val, connected_dir * connected_val))
-
-    return w
-
-
-def _compute_weight_bingham(start, end, direction, sphere, wm_mask, bingham_params, node_to_voxel, theta_max=4*np.pi/26):
+def _compute_weight_bingham(start, end, direction, sphere, wm_mask, bingham_params, node_to_voxel, theta_max=4*np.pi/26, max_turn_deg=25):
 
     # Get voxel and lobe id ([x, y, z, lobe])
     vox_start = node_to_voxel[start]
@@ -149,26 +142,41 @@ def _compute_weight_bingham(start, end, direction, sphere, wm_mask, bingham_para
         # If no mask is given, we assume that all nodes are part of the white matter
         pmat = 1
 
-    # Reconstruct ODF lobe corresponding to the node
-    lobe_params_end = bingham_params[tuple(vox_end)]
-
-    f0 = lobe_params_end[0]
-    k1 = lobe_params_end[1]
-    k2 = lobe_params_end[2]
-    mu1 = lobe_params_end[6:9]
-    mu2 = lobe_params_end[9:12]
-
-    sf_end = _single_bingham_to_sf(f0, k1, k2, mu1, mu2, sphere.vertices)
-
     # Define a cone to calculate the alignments of the ODFs
-    dir_norm = np.linalg.norm(direction, axis=-1, keepdims=True)
-    direction /= dir_norm
-
+    direction = np.asarray(direction, dtype=float)
+    dir_norm = np.linalg.norm(direction)
+    direction = direction / dir_norm
     mask = np.dot(sphere.vertices, direction) > np.cos(theta_max)
 
-    pdiff = np.sum(sf_end[mask])
+    lobe_params_start = bingham_params[tuple(vox_start)]
+    lobe_params_end = bingham_params[tuple(vox_end)]
 
-    return pmat * pdiff / dir_norm
+    p_end = _lobe_mass_in_cone(lobe_params_end, sphere, mask)
+    p_start = _lobe_mass_in_cone(lobe_params_start, sphere, mask)
+
+    # Both lobes must be aligned with the step. The geometric mean is
+    # symmetric: weight(A -> B) == weight(B -> A).
+    pdiff = np.sqrt(p_start * p_end)
+
+    cos_turn = abs(np.dot(lobe_params_start[3:6], lobe_params_end[3:6]))
+    turn = np.degrees(np.arccos(np.clip(cos_turn, 0, 1)))
+    if turn / dir_norm > max_turn_deg:
+        return 0.0
+
+    return float(pmat * pdiff * cos_turn / dir_norm)
+
+def _lobe_mass_in_cone(lobe_params, sphere, mask):
+    f0 = lobe_params[0]
+    k1 = lobe_params[1]
+    k2 = lobe_params[2]
+    mu1 = lobe_params[6:9]
+    mu2 = lobe_params[9:12]
+    sf = _single_bingham_to_sf(f0, k1, k2, mu1, mu2, sphere.vertices)
+    total = np.sum(sf)
+    if total <= 0:
+        return 0.0
+    # Fraction of the lobe inside the cone
+    return np.sum(sf[mask]) / total
 
 
 def _get_neighbors(voxel, voxel_to_node):
@@ -195,17 +203,23 @@ def _get_neighbors(voxel, voxel_to_node):
                         directions.append([x_offset, y_offset, z_offset])
     return neighbors, directions
 
-
 def _normalize_graph(coo, csr):
     # We want to keep all weights below 0.5
     row_max = np.zeros(csr.shape[0], dtype=csr.dtype)
     np.maximum.at(row_max, coo.row, coo.data)
+    scale = 0.5 / max(csr.max(), 1e-10)
+    csr_norm = csr * scale
+    csr_norm_t = csr_norm.T
 
-    # Avoid division by 0
-    scale = scale = 0.5 / np.clip(row_max, a_min=1e-10, a_max=None)
-    csr_norm = diags(scale) @ csr
+    has_fwd = (csr_norm != 0).astype(float)
+    has_rev = (csr_norm_t != 0).astype(float)
 
-    # Edge weight = weight(A -> B) + weight(B -> A)
-    csr = csr_norm + csr_norm.T
+    # Seen in both directions: weight(A -> B) + weight(B -> A)
+    both = csr_norm.multiply(has_rev) + csr_norm_t.multiply(has_fwd)
 
-    return csr
+    # Seen in one direction only: count it twice, so that a missing
+    # direction does not make an edge cheaper
+    one_way = (csr_norm - csr_norm.multiply(has_rev)) + \
+              (csr_norm_t - csr_norm_t.multiply(has_fwd))
+
+    return (both + 2 * one_way).tocsr()

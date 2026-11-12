@@ -160,9 +160,8 @@ def _propagate(line, initial_direction, nodes_mask, voxres, peak_dirs, csr, node
 
             start_node = voxel_to_node[pos_round[0],
                                        pos_round[1], pos_round[2], max_idx]
-            paths = solve_dijkstra_multiple_paths(csr,
+            paths = solve_dijkstra_multiple_paths(csr, node_to_voxel,
                                                   voxel_to_node, nodes_mask,
-                                                  node_to_voxel=node_to_voxel,
                                                   start_node=start_node,
                                                   exit_mask=exit_mask,
                                                   nb_paths=30)
@@ -229,8 +228,8 @@ def _propagate(line, initial_direction, nodes_mask, voxres, peak_dirs, csr, node
 def get_exit_mask(nodes_mask):
 
     footprint = np.ones((5, 5, 5), dtype=bool)
-    expanded_mask = binary_dilation(nodes_mask, structure=footprint)
-    exit_mask = expanded_mask & ~nodes_mask
+    expanded_mask = binary_dilation(nodes_mask.astype(bool), structure=footprint)
+    exit_mask = expanded_mask & ~nodes_mask.astype(bool)
 
     return exit_mask
 

@@ -52,11 +52,11 @@ def main():
         show_graph_2d(csr, node_to_voxel, output_name=output_name,
                       save_only=args.save_only, axis=args.axis_name)
     if args.fig_type == 'shortest_path':
-        path = solve_dijkstra_single_path(csr, voxel_to_node, nodes_mask)
+        path = solve_dijkstra_single_path(csr, node_to_voxel, voxel_to_node, nodes_mask)
         show_graph_2d(csr, node_to_voxel, output_name=output_name,
                       path=path, save_only=args.save_only, axis=args.axis_name)
     if args.fig_type == 'heatmap':
-        paths = solve_dijkstra_multiple_paths(csr, voxel_to_node, nodes_mask)
+        paths = solve_dijkstra_multiple_paths(csr, node_to_voxel, voxel_to_node, nodes_mask)
         show_graph_2d(csr, node_to_voxel, output_name=output_name,
                       save_only=args.save_only, axis=args.axis_name, heatmap=True, paths=paths)
 

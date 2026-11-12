@@ -38,11 +38,11 @@ def main():
     footprint_3 = np.ones((3, 3, 3), dtype=bool)
     footprint_5 = np.ones((5, 5, 5), dtype=bool)
 
-    expanded_mask = binary_dilation(nodes_mask, structure=footprint_5)
-    exit_mask = expanded_mask & ~nodes_mask
+    expanded_mask = binary_dilation(nodes_mask.astype(bool), structure=footprint_5)
+    exit_mask = expanded_mask & ~nodes_mask.astype(bool)
 
     exit_dilated = binary_dilation(exit_mask, structure=footprint_3)
-    perimeter_mask = exit_dilated & nodes_mask
+    perimeter_mask = exit_dilated & nodes_mask.astype(bool)
 
     nib.save(nib.Nifti1Image(exit_mask.astype(np.uint8), affine),
              "exit_mask.nii.gz")
@@ -55,8 +55,8 @@ def main():
     # Create streamlines starting from each node in the perimeter of the graph
     for voxel in np.argwhere(perimeter_mask):
         for node in voxel_to_node[tuple(voxel)]:
-            paths = solve_dijkstra_multiple_paths(csr, voxel_to_node, nodes_mask,
-                                                  node_to_voxel=node_to_voxel,
+            paths = solve_dijkstra_multiple_paths(csr, node_to_voxel, 
+                                                  voxel_to_node, nodes_mask,
                                                   start_node=node,
                                                   exit_mask=exit_mask,
                                                   nb_paths=10)
