@@ -83,7 +83,8 @@ def _path_length(predecessors, start, end, node_to_voxel):
         if node == -9999:
             return 1e-6
         prev = predecessors[node]
-        length += np.linalg.norm(node_to_voxel[node, :3] - node_to_voxel[prev, :3])
+        if prev != -9999:
+            length += np.linalg.norm(node_to_voxel[node, :3] - node_to_voxel[prev, :3])
         node = prev
     return max(length, 1e-6)
 
@@ -100,14 +101,14 @@ def _get_path(predecessors, start, end):
     return path[::-1]
 
 
-def path_is_valid(path, max_angle_deg=60):
+def path_is_valid(path_voxel, max_angle_deg=60):
     # Checks the angle between every pair of two consecutive points
     # in a path.
 
     max_angle_rad = np.cos(np.radians(max_angle_deg))
     prev_direction = None
-    for i in range(len(path) - 1):
-        direction = path[i + 1] - path[i]
+    for i in range(len(path_voxel) - 1):
+        direction = path_voxel[i + 1] - path_voxel[i]
         dir_norm = direction / np.linalg.norm(direction)
 
         if prev_direction is not None:
@@ -123,10 +124,10 @@ def path_is_valid(path, max_angle_deg=60):
 
 
 def _get_start_u(voxel_to_node):
-    # return voxel_to_node[25, 41, 1, 0]     # fibercup 
+    return voxel_to_node[25, 41, 1, 0]     # fibercup 
     # return voxel_to_node[45, 43, 1, 1]
     # return voxel_to_node[17, 41, 1, 1]
-    return voxel_to_node[19, 21, 26, 1]     #  2 bundles 60 deg
+    # return voxel_to_node[19, 21, 26, 1]     #  2 bundles 60 deg
 
 
 def _get_targets_u(voxel_to_node):

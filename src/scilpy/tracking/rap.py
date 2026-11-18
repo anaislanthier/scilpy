@@ -237,12 +237,16 @@ class RAPHybrid(RAPSwitch):
         self.exit_mask = self._get_exit_mask()
         self.perimeter_mask = self._get_perimeter_mask()
 
+        # Maps every node to its valid paths and their corresponding endpoints,
+        # as well as the path's strength
         self.valid_paths = {}
         self.valid_endpoints = {}
+        self.valid_paths_strength = {}
 
         self._precompute_valid_paths()
 
         self.exit_cone_angle = np.radians(85)
+        self.first_step_angle = np.radians(60)
 
     def rap_multistep_propagate(self, line, prev_direction):
         label = self._get_label(line[-1], self.propagator.space,
@@ -279,6 +283,7 @@ class RAPHybrid(RAPSwitch):
         
         candidate_paths = self.valid_paths[start_node]
         candidate_endpoints = self.valid_endpoints[start_node]
+        path_strengths = self.valid_paths_strength[start_node]
 
         if len(candidate_paths) == 0:
             return line, prev_direction, False
@@ -288,19 +293,38 @@ class RAPHybrid(RAPSwitch):
         axis /= np.linalg.norm(axis)
 
         ends = np.array([p[-1] for p in candidate_paths])  # exit voxels
-        d = ends - pos
-        dist = np.linalg.norm(d, axis=1)
-        angle = np.arccos(np.clip((d @ axis) / dist, -1, 1))
+        dist = ends - pos
+        dist /= np.linalg.norm(dist, axis=1, keepdims=True)
+        exit_angle = np.arccos(np.clip(np.dot(dist, axis), -1, 1))
 
-        keep = angle > self.exit_cone_angle
-        candidate_paths = [p for p, k in zip(candidate_paths, keep) if k][:5]
-        candidate_endpoints = [e for e, k in zip(candidate_endpoints, keep) if k][:5]
+        keep = exit_angle > self.exit_cone_angle
+        candidate_paths = [p for p, k in zip(candidate_paths, keep) if k]
+        candidate_endpoints = [e for e, k in zip(candidate_endpoints, keep) if k]
+        path_strengths = [e for e, k in zip(path_strengths, keep) if k]
 
         if len(candidate_paths) == 0:
             return line, prev_direction, False
 
-        # Randomly select a path and it's corresponding endpoint
-        chosen_idx = random.randrange(len(candidate_paths))
+        # Reject paths where the angle between the first step and prev_direction is too big
+        first_step_dir = [p[1] - p[0] for p in candidate_paths]
+        first_step_dir /= np.linalg.norm(first_step_dir, axis=1, keepdims=True)
+        prev_dir_norm = prev_direction / np.linalg.norm(prev_direction)
+        angle_first_step = np.arccos(np.clip(np.dot(first_step_dir, prev_dir_norm), -1, 1))
+
+        keep = angle_first_step <  self.first_step_angle
+        candidate_paths = [p for p, k in zip(candidate_paths, keep) if k]
+        candidate_endpoints = [e for e, k in zip(candidate_endpoints, keep) if k]
+        path_strengths = [e for e, k in zip(path_strengths, keep) if k]
+        
+        if len(candidate_paths) == 0:
+            return line, prev_direction, False
+
+        # Sort paths according to path_strength
+        path_strengths /= np.sum(path_strengths)
+
+        # Randomly select a remaining path and it's corresponding endpoint
+        rng = self.propagator.line_rng_generator
+        chosen_idx = rng.choice(len(candidate_paths), p=path_strengths)
         chosen_path = candidate_paths[chosen_idx]
         chosen_endpoint = candidate_endpoints[chosen_idx]
 
@@ -339,12 +363,6 @@ class RAPHybrid(RAPSwitch):
             for node in self.voxel_to_node[tuple(voxel)]:
                 if node < 0: 
                     continue
-                # TODO Find another way to choose the path
-                # This is temporary
-                #
-                # We take the 10 most likely paths starting from
-                # start_node. We filter out the "impossible" paths and
-                # randomly select one of the "possible" paths
                 paths = solve_dijkstra_multiple_paths(self.csr, self.node_to_voxel,
                                       self.voxel_to_node, self.nodes_mask,
                                       start_node=node,
@@ -353,20 +371,32 @@ class RAPHybrid(RAPSwitch):
 
                 candidate_paths = []
                 candidate_endpoints = []
-                for path in paths:
-                    if path is None:
+                path_strengths = []
+                for path_node in paths:
+                    if path_node is None:
                         continue
-                    path_voxel_lobe = [self.node_to_voxel[p] for p in path]
+                    path_voxel_lobe = [self.node_to_voxel[p] for p in path_node]
                     path_voxel = [p[:3] for p in path_voxel_lobe]
                     if path_is_valid(path_voxel):
                         candidate_paths.append(np.array(path_voxel, dtype=np.float32))
                         candidate_endpoints.append(path_voxel_lobe[-1])
+                        path_strengths.append(self._compute_path_strength(path_node))
 
                 self.valid_paths[node] = candidate_paths
                 self.valid_endpoints[node] = candidate_endpoints
+                self.valid_paths_strength[node] = path_strengths
 
-    def _correct_path(self, path, diff):
+    def _correct_path(self, path_voxel, diff):
         # This needs to be improved
         # This can make streamlines exit the wm mask
-        new_path = [point + diff for point in path]
+        new_path = [point + diff for point in path_voxel]
         return new_path
+
+    def _compute_path_strength(self, path_node):
+        edges_mult = 1
+        for i in range(len(path_node) - 1):
+            edges_mult *= self.csr[path_node[i], path_node[i + 1]]
+        # The best edges are the ones with the smallest weights
+        # We want a greater path strength to inidcate a better path
+        strength = 1/edges_mult
+        return strength

@@ -61,6 +61,8 @@ def main():
                                                   exit_mask=exit_mask,
                                                   nb_paths=10)
             for path in paths:
+                if path is None:
+                    continue
                 path_voxel = [node_to_voxel[p][:3] for p in path]
                 if path_is_valid(path_voxel):
                     streamlines.append(np.array(path_voxel, dtype=np.float32))
