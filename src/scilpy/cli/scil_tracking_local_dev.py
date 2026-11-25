@@ -381,6 +381,9 @@ def main():
             elif cfg.get('propagator').lower() == 'graph':
                 propagators[label] = cfg['filename']
                 graph_tracking = True
+                logging.warning("You are using graph tracking. Make sure that" \
+                "the seed mask excludes all graph regions. Think of using " \
+                "scil_volume_math substract [your seed mask] [graph mask]")
             else:
                 raise ValueError(
                     f"Unknown propagator type '{cfg.get('propagator')}"

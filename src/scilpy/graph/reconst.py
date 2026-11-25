@@ -51,7 +51,7 @@ def build_sparse_array(nodes_mask, sh, sh_basis, is_legacy, threshold, nufo, wm_
 
     # Create a mask that will include neighboring voxels of nodes with a graph label
     footprint = np.ones((5, 5, 5), dtype=bool)
-    expanded_mask = binary_dilation(nodes_mask.astype(bool), structure=footprint)
+    expanded_mask = binary_dilation(nodes_mask, structure=footprint)
 
     sphere = get_sphere(name="repulsion724")
 
@@ -71,16 +71,20 @@ def build_sparse_array(nodes_mask, sh, sh_basis, is_legacy, threshold, nufo, wm_
     peak_dirs = bingham_metrics.peak_dirs
     peak_values = bingham_metrics.fd_lobe
 
-    n_edges = int(nodes_mask.sum()) * 98 * (nufo ** 2)
+    # Directed graph : Each lobe has two directions ("up" and "down")
+    # We will have one graph node per direction
+    n_nodes_per_voxel = nufo * 2 
+
+    n_edges = int(nodes_mask.sum()) * 98 * (n_nodes_per_voxel ** 2)
 
     rows = np.zeros((n_edges), dtype=int)
     cols = np.zeros((n_edges), dtype=int)
     weights = np.zeros((n_edges), dtype=float)
 
-    n_nodes = int(expanded_mask.sum()) * nufo
+    n_nodes = int(expanded_mask.sum()) * n_nodes_per_voxel
 
-    voxel_to_node = np.full_like(
-        bingham_metrics.fd_lobe[:, :, :, :nufo], -1, dtype=np.int32)
+    voxel_to_node = np.full(
+        (nodes_mask.shape[0], nodes_mask.shape[1], nodes_mask.shape[2], n_nodes_per_voxel), -1, dtype=np.int32)
     node_to_voxel = np.zeros((n_nodes, 4), dtype=int)
 
     node_count = 0
@@ -88,7 +92,7 @@ def build_sparse_array(nodes_mask, sh, sh_basis, is_legacy, threshold, nufo, wm_
     for voxel in np.argwhere(expanded_mask):
         x, y, z = voxel
         # Create a node for every peak direction
-        for i in range(nufo):
+        for i in range(n_nodes_per_voxel):
             voxel_to_node[x, y, z, i] = node_count
             node_to_voxel[node_count] = [x, y, z, i]
             node_count = node_count + 1
@@ -129,7 +133,7 @@ def build_sparse_array(nodes_mask, sh, sh_basis, is_legacy, threshold, nufo, wm_
 
 def _compute_weight_bingham(start, end, direction, sphere, wm_mask, bingham_params, node_to_voxel, theta_max=4*np.pi/26, max_turn_deg=25):
 
-    # Get voxel and lobe id ([x, y, z, lobe])
+    # Get voxel and direction id ([x, y, z, direction_index])
     vox_start = node_to_voxel[start]
     vox_end = node_to_voxel[end]
 
@@ -148,8 +152,11 @@ def _compute_weight_bingham(start, end, direction, sphere, wm_mask, bingham_para
     direction = direction / dir_norm
     mask = np.dot(sphere.vertices, direction) > np.cos(theta_max)
 
-    lobe_params_start = bingham_params[tuple(vox_start)]
-    lobe_params_end = bingham_params[tuple(vox_end)]
+    lobe_id_start, orientation_start = _get_lobe_id(vox_start[3])
+    lobe_id_end, orientation_end = _get_lobe_id(vox_end[3])
+
+    lobe_params_start = bingham_params[vox_start[0], vox_start[1], vox_start[2], lobe_id_start]
+    lobe_params_end = bingham_params[vox_end[0], vox_end[1], vox_end[2], lobe_id_end]
 
     p_end = _lobe_mass_in_cone(lobe_params_end, sphere, mask)
     p_start = _lobe_mass_in_cone(lobe_params_start, sphere, mask)
@@ -158,12 +165,33 @@ def _compute_weight_bingham(start, end, direction, sphere, wm_mask, bingham_para
     # symmetric: weight(A -> B) == weight(B -> A).
     pdiff = np.sqrt(p_start * p_end)
 
-    cos_turn = abs(np.dot(lobe_params_start[3:6], lobe_params_end[3:6]))
-    turn = np.degrees(np.arccos(np.clip(cos_turn, 0, 1)))
-    if turn / dir_norm > max_turn_deg:
+    d_start = orientation_start * lobe_params_start[3:6]
+    d_end = orientation_end * lobe_params_end[3:6]
+
+    # Directed edge: the step must go forward for both oriented nodes
+    if np.dot(direction, d_start) <= 0 or np.dot(direction, d_end) <= 0:
+        return 0.0
+    
+    cos_turn = np.dot(d_start, d_end)
+    turn = np.degrees(np.arccos(np.clip(cos_turn, -1, 1)))
+    if turn > max_turn_deg:
         return 0.0
 
-    return float(pmat * pdiff * cos_turn / dir_norm)
+    return float(pmat * pdiff / dir_norm)
+
+def _get_lobe_id(direction_index):
+    # Since we have two nodes per lobe, node 0 & 1 are associated to lobe 0,
+    # lobe 2 & 3 are associated to node 1, and so on...
+    lobe_id = int(np.floor(direction_index/2))
+    # Arbitrarily, the even directions (0, 2, 4, ...) are considered "up" 
+    # and the uneven directions are "down"
+    # Up is associated to a positive multiplicator (1) while down is
+    # associated to -1 
+    is_up = direction_index % 2 == 0
+    if is_up:
+        return lobe_id, 1
+    return lobe_id, -1
+
 
 def _lobe_mass_in_cone(lobe_params, sphere, mask):
     f0 = lobe_params[0]
@@ -204,22 +232,10 @@ def _get_neighbors(voxel, voxel_to_node):
     return neighbors, directions
 
 def _normalize_graph(coo, csr):
-    # We want to keep all weights below 0.5
+    # We want to keep all weights below 1
     row_max = np.zeros(csr.shape[0], dtype=csr.dtype)
     np.maximum.at(row_max, coo.row, coo.data)
-    scale = 0.5 / max(csr.max(), 1e-10)
+    scale = 1.0 / max(csr.max(), 1e-10)
     csr_norm = csr * scale
-    csr_norm_t = csr_norm.T
 
-    has_fwd = (csr_norm != 0).astype(float)
-    has_rev = (csr_norm_t != 0).astype(float)
-
-    # Seen in both directions: weight(A -> B) + weight(B -> A)
-    both = csr_norm.multiply(has_rev) + csr_norm_t.multiply(has_fwd)
-
-    # Seen in one direction only: count it twice, so that a missing
-    # direction does not make an edge cheaper
-    one_way = (csr_norm - csr_norm.multiply(has_rev)) + \
-              (csr_norm_t - csr_norm_t.multiply(has_fwd))
-
-    return (both + 2 * one_way).tocsr()
+    return csr_norm

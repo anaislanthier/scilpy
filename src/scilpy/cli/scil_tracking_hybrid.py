@@ -228,8 +228,8 @@ def _propagate(line, initial_direction, nodes_mask, voxres, peak_dirs, csr, node
 def get_exit_mask(nodes_mask):
 
     footprint = np.ones((5, 5, 5), dtype=bool)
-    expanded_mask = binary_dilation(nodes_mask.astype(bool), structure=footprint)
-    exit_mask = expanded_mask & ~nodes_mask.astype(bool)
+    expanded_mask = binary_dilation(nodes_mask, structure=footprint)
+    exit_mask = expanded_mask & ~nodes_mask
 
     return exit_mask
 

@@ -12,8 +12,8 @@ def solve_dijkstra_single_path(graph, node_to_voxel, voxel_to_node, nodes_mask, 
     # Create exit mask if not provided
     if exit_mask is None:
         footprint = np.ones((5, 5, 5), dtype=bool)
-        expanded_mask = binary_dilation(nodes_mask.astype(bool), structure=footprint)
-        exit_mask = expanded_mask & ~nodes_mask.astype(bool)
+        expanded_mask = binary_dilation(nodes_mask, structure=footprint)
+        exit_mask = expanded_mask & ~nodes_mask
 
     if start_node is None:
         start_node = _get_start_u(voxel_to_node)
@@ -25,7 +25,7 @@ def solve_dijkstra_single_path(graph, node_to_voxel, voxel_to_node, nodes_mask, 
             targets.append(node)
 
     dist_matrix, predecessors = dijkstra(graph,
-                                         directed=False,
+                                         directed=True,
                                          indices=start_node,
                                          return_predecessors=True)
 
@@ -44,8 +44,8 @@ def solve_dijkstra_multiple_paths(graph, node_to_voxel, voxel_to_node, nodes_mas
     # Create exit mask if not provided
     if exit_mask is None:
         footprint = np.ones((5, 5, 5), dtype=bool)
-        expanded_mask = binary_dilation(nodes_mask.astype(bool), structure=footprint)
-        exit_mask = expanded_mask & ~nodes_mask.astype(bool)
+        expanded_mask = binary_dilation(nodes_mask, structure=footprint)
+        exit_mask = expanded_mask & ~nodes_mask
 
     if start_node is None:
         start_node = _get_start_u(voxel_to_node)
@@ -58,7 +58,7 @@ def solve_dijkstra_multiple_paths(graph, node_to_voxel, voxel_to_node, nodes_mas
                 targets.append(node)
 
     dist_matrix, predecessors = dijkstra(graph,
-                                         directed=False,
+                                         directed=True,
                                          indices=start_node,
                                          return_predecessors=True)
 

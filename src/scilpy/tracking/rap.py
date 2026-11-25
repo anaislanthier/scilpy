@@ -5,10 +5,12 @@ import numpy as np
 import random
 
 from scipy.ndimage import binary_dilation
+from scipy.sparse.csgraph import dijkstra
 
 from scilpy.graph.io import load_graph_sparse
 from scilpy.graph.solve import solve_dijkstra_multiple_paths, path_is_valid
 from scilpy.tracking.utils import TrackingDirection
+from scilpy.graph.reconst import _get_lobe_id
 
 
 class RAP:
@@ -256,6 +258,7 @@ class RAPHybrid(RAPSwitch):
         return super().rap_multistep_propagate(line, prev_direction)
 
     def _graph_step(self, line, prev_direction):
+
         pos = line[-1]
         pos_round = np.round(pos).astype(int)
         diff_pos = pos - pos_round
@@ -274,9 +277,11 @@ class RAPHybrid(RAPSwitch):
             if abs(dot) > max_dot:
                 max_dot = abs(dot)
                 max_idx = i
+                is_up = dot >= 0
 
+        node_idx = 2 * max_idx + (0 if is_up else 1)
         start_node = self.voxel_to_node[pos_round[0],
-                                        pos_round[1], pos_round[2], max_idx]
+                                        pos_round[1], pos_round[2], node_idx]
 
         if start_node < 0: 
             return line, prev_direction, False
@@ -284,23 +289,6 @@ class RAPHybrid(RAPSwitch):
         candidate_paths = self.valid_paths[start_node]
         candidate_endpoints = self.valid_endpoints[start_node]
         path_strengths = self.valid_paths_strength[start_node]
-
-        if len(candidate_paths) == 0:
-            return line, prev_direction, False
-
-        # Reject paths exiting inside a backward cone to avoid immediate exits.
-        axis = -np.asarray(prev_direction, dtype=float)
-        axis /= np.linalg.norm(axis)
-
-        ends = np.array([p[-1] for p in candidate_paths])  # exit voxels
-        dist = ends - pos
-        dist /= np.linalg.norm(dist, axis=1, keepdims=True)
-        exit_angle = np.arccos(np.clip(np.dot(dist, axis), -1, 1))
-
-        keep = exit_angle > self.exit_cone_angle
-        candidate_paths = [p for p, k in zip(candidate_paths, keep) if k]
-        candidate_endpoints = [e for e, k in zip(candidate_endpoints, keep) if k]
-        path_strengths = [e for e, k in zip(path_strengths, keep) if k]
 
         if len(candidate_paths) == 0:
             return line, prev_direction, False
@@ -328,13 +316,11 @@ class RAPHybrid(RAPSwitch):
         chosen_path = candidate_paths[chosen_idx]
         chosen_endpoint = candidate_endpoints[chosen_idx]
 
-        endpoint_dir = self.peak_dirs[tuple(chosen_endpoint)]
+        lobe_id, orientation = _get_lobe_id(chosen_endpoint[3])
+
+        endpoint_dir = orientation * self.peak_dirs[chosen_endpoint[0], chosen_endpoint[1], chosen_endpoint[2], lobe_id]
         endpoint_dir = endpoint_dir / \
             np.linalg.norm(endpoint_dir, axis=-1, keepdims=True)
-        seg = chosen_path[-1] - chosen_path[-2]
-
-        if np.dot(endpoint_dir, seg) < 0:
-            endpoint_dir = -endpoint_dir
 
         # Endpoint directions needs to be of type TrackingDirection
         ind = self.propagator.sphere.find_closest(endpoint_dir)
@@ -348,14 +334,14 @@ class RAPHybrid(RAPSwitch):
 
     def _get_exit_mask(self):
         footprint = np.ones((5, 5, 5), dtype=bool)
-        expanded_mask = binary_dilation(self.nodes_mask.astype(bool), structure=footprint)
-        exit_mask = expanded_mask & ~self.nodes_mask.astype(bool)
+        expanded_mask = binary_dilation(self.nodes_mask, structure=footprint)
+        exit_mask = expanded_mask & ~self.nodes_mask
         return exit_mask
 
     def _get_perimeter_mask(self):
         footprint = np.ones((3, 3, 3), dtype=bool)
         exit_dilated = binary_dilation(self.exit_mask, structure=footprint)
-        perimeter_mask = exit_dilated & self.nodes_mask.astype(bool)
+        perimeter_mask = exit_dilated & self.nodes_mask
         return perimeter_mask
 
     def _precompute_valid_paths(self):

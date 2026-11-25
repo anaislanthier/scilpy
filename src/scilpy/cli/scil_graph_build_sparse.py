@@ -64,7 +64,7 @@ def main():
         wm = nib.load(args.wm_mask)
         wm_mask = wm.get_fdata()
 
-    nodes_mask = (nufo_map.get_fdata() == args.in_nufo_label).astype(int)
+    nodes_mask = (nufo_map.get_fdata() == args.in_nufo_label).astype(bool)
     affine = nufo_map.affine
 
     csr, node_to_voxel, voxel_to_node, peak_dirs = build_sparse_array(nodes_mask,

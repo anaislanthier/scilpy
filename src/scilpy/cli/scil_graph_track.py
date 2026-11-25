@@ -38,11 +38,11 @@ def main():
     footprint_3 = np.ones((3, 3, 3), dtype=bool)
     footprint_5 = np.ones((5, 5, 5), dtype=bool)
 
-    expanded_mask = binary_dilation(nodes_mask.astype(bool), structure=footprint_5)
-    exit_mask = expanded_mask & ~nodes_mask.astype(bool)
+    expanded_mask = binary_dilation(nodes_mask, structure=footprint_5)
+    exit_mask = expanded_mask & ~nodes_mask
 
     exit_dilated = binary_dilation(exit_mask, structure=footprint_3)
-    perimeter_mask = exit_dilated & nodes_mask.astype(bool)
+    perimeter_mask = exit_dilated & nodes_mask
 
     nib.save(nib.Nifti1Image(exit_mask.astype(np.uint8), affine),
              "exit_mask.nii.gz")
