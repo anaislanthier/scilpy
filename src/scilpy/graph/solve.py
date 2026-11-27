@@ -5,9 +5,33 @@ import nibabel as nib
 
 
 def solve_dijkstra_single_path(graph, node_to_voxel, voxel_to_node, nodes_mask, start_node=None, exit_mask=None):
+    """
+    Computes the shortest paths from one node to any node in the exit mask.
 
-    # This is temporary
-    # Finds shortest path from one node to any node in the exit mask
+    Parameters
+    ----------
+    graph : scipy.sparse.csr_array
+        Normalized sparse adjacency matrix. Smaller weights must correspond
+        to a better path.
+    node_to_voxel : np.ndarray
+        Maps each node ID to its voxel coordinates and direction index:
+        node_to_voxel[node_id] = [x, y, z, direction_index].
+    voxel_to_node : np.ndarray
+        Maps each voxel and direction index to a node ID:
+        voxel_to_node[x, y, z, i] = node_id, or -1 if no node exists.
+    nodes_mask : np.ndarray
+        Binary mask of which voxels are assigned to graph tracking.
+    start_node : int, optional
+        Starting point from which we calculate the shortest path.
+    exit mask : np.ndarray, optional
+        Allowed endpoints for the shortest path.
+
+    Returns
+    -------
+    path_node : np.ndarray
+        Shortest path, represented as a list of nodes.
+
+    """
 
     # Create exit mask if not provided
     if exit_mask is None:
@@ -35,11 +59,43 @@ def solve_dijkstra_single_path(graph, node_to_voxel, voxel_to_node, nodes_mask, 
         _path_length(predecessors, start_node, t, node_to_voxel)
     )
 
-    path = _get_path(predecessors, start_node, best_target)
-    return path
+    path_node = _get_path(predecessors, start_node, best_target)
+    
+    return path_node
 
 
 def solve_dijkstra_multiple_paths(graph, node_to_voxel, voxel_to_node, nodes_mask, start_node=None, exit_mask=None, nb_paths=100):
+
+    """
+    Computes the shortest paths from one node to multiple nodes in the exit mask.
+
+    Parameters
+    ----------
+    graph : scipy.sparse.csr_array
+        Normalized sparse adjacency matrix. Smaller weights must correspond
+        to a better path.
+    node_to_voxel : np.ndarray
+        Maps each node ID to its voxel coordinates and direction index:
+        node_to_voxel[node_id] = [x, y, z, direction_index].
+    voxel_to_node : np.ndarray
+        Maps each voxel and direction index to a node ID:
+        voxel_to_node[x, y, z, i] = node_id, or -1 if no node exists.
+    nodes_mask : np.ndarray
+        Binary mask of which voxels are assigned to graph tracking.
+    start_node : int, optional
+        Starting point from which we calculate the shortest path.
+    exit mask : np.ndarray, optional
+        Allowed endpoints for the shortest path.
+    nb_paths : int, optional
+        Number of paths to be returned, or number of endpoints
+
+    Returns
+    -------
+    path_node : np.ndarray
+        Shortest paths, represented as a list of lists of nodes.
+        Paths are sorted from shortest to longest. 
+
+    """
 
     # Create exit mask if not provided
     if exit_mask is None:
@@ -71,10 +127,10 @@ def solve_dijkstra_multiple_paths(graph, node_to_voxel, voxel_to_node, nodes_mas
         _path_length(predecessors, start_node, t, node_to_voxel)
     )
 
-    shortest_paths = [_get_path(predecessors, start_node, t)
+    shortest_paths_node = [_get_path(predecessors, start_node, t)
                       for t in scored[:nb_paths]]
 
-    return shortest_paths
+    return shortest_paths_node
 
 def _path_length(predecessors, start, end, node_to_voxel):
     length = 0.0
@@ -101,9 +157,19 @@ def _get_path(predecessors, start, end):
     return path[::-1]
 
 
-def path_is_valid(path_voxel, max_angle_deg=60):
-    # Checks the angle between every pair of two consecutive points
-    # in a path.
+def path_is_valid(path_voxel, max_angle_deg=60.0):
+    """
+    Checks the angle between every pair of two consecutive points
+    in a path. Returns False if an angle is greater than a certain
+    threshold.
+
+    Parameters
+    ----------
+    path_voxel : np.ndarray
+        The path, represented as a list of voxels. 
+    max_angle_deg : float, optional
+        The maximum tolerated angle. 
+    """
 
     max_angle_rad = np.cos(np.radians(max_angle_deg))
     prev_direction = None

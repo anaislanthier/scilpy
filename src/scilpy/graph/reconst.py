@@ -98,9 +98,10 @@ def build_sparse_array(nodes_mask, sh, sh_basis, is_legacy, threshold, nufo, wm_
             node_count = node_count + 1
 
     count = 0
+    progress = 0
     for voxel in np.argwhere(nodes_mask):
         nodes = voxel_to_node[tuple(voxel)]
-        # Adds possibility of an edge to the actual node closest neighbour in 26 directions
+        # Adds possibility of an edge to the actual node closest neighbour in 98 directions
         neighbors, directions = _get_neighbors(
             voxel, voxel_to_node=voxel_to_node)
         for node in nodes:
@@ -114,7 +115,8 @@ def build_sparse_array(nodes_mask, sh, sh_basis, is_legacy, threshold, nufo, wm_
                     # We will later want to minimize the path weight
                     weights[count] = 1/w
                     count = count + 1
-        print(f"\r{count}/{n_edges}  ({100*count/n_edges:.1f}%)",
+                progress += 1
+        print(f"\r{progress}/{n_edges}  ({100*progress/n_edges:.1f}%)",
               end="", flush=True)
 
     n_total = int(voxel_to_node.max()) + 1
@@ -163,7 +165,8 @@ def _compute_weight_bingham(start, end, direction, sphere, wm_mask, bingham_para
 
     # Both lobes must be aligned with the step. The geometric mean is
     # symmetric: weight(A -> B) == weight(B -> A).
-    pdiff = np.sqrt(p_start * p_end)
+    #pdiff = np.sqrt(p_start * p_end)
+    pdiff = (p_start + p_end)/2
 
     d_start = orientation_start * lobe_params_start[3:6]
     d_end = orientation_end * lobe_params_end[3:6]

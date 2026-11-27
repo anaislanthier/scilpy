@@ -10,7 +10,7 @@ from dipy.tracking.streamlinespeed import length
 from dipy.data import get_sphere
 from dipy.reconst.shm import sh_to_sf_matrix
 
-from scilpy.graph.io import load_graph_sparse
+from scilpy.graph.io import load_graph
 from scilpy.graph.solve import solve_dijkstra_multiple_paths, path_is_valid
 """
 Prototype to create streamlines from local tracking and graph tracking.
@@ -50,7 +50,7 @@ def main():
 
     voxres = fodfs.header.get_zooms()[:3]
 
-    csr, node_to_voxel, voxel_to_node, nodes_mask, affine, peak_dirs = load_graph_sparse(
+    csr, node_to_voxel, voxel_to_node, nodes_mask, affine, peak_dirs = load_graph(
         args.in_graph)
 
     # Create seeding mask

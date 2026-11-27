@@ -7,7 +7,7 @@ import random
 from scipy.ndimage import binary_dilation
 from scipy.sparse.csgraph import dijkstra
 
-from scilpy.graph.io import load_graph_sparse
+from scilpy.graph.io import load_graph
 from scilpy.graph.solve import solve_dijkstra_multiple_paths, path_is_valid
 from scilpy.tracking.utils import TrackingDirection
 from scilpy.graph.reconst import _get_lobe_id
@@ -77,7 +77,7 @@ class RAPContinue(RAP):
 class RAPSwitch(RAP):
     """RAP class that switches tracking parameters when inside the RAP mask/label."""
 
-    def __init__(self, rap_volume, propagators: dict):
+    def __init__(self, rap_volume, propagators: dict, hybrid_tracking=False):
         """
         Parameters
         ----------
@@ -88,6 +88,8 @@ class RAPSwitch(RAP):
             If --in_odf is provided, contains {odf_path: propagator}
             as default. Additional propagators are keyed by their label,
             loaded from the 'filename' key in rap_policies.json.
+        hybrid_tracking : bool
+            True if we are using hybrid tracking (classical + graph tracking)
         """
         base_propagator = list(propagators.values())[
             0] if propagators else None
@@ -105,19 +107,20 @@ class RAPSwitch(RAP):
         else:
             self._base = {}
 
-        # Check if all labels in the volume are covered by the configuration
-        unique_labels = np.unique(rap_volume.data)
-        # Remove 0 (background) and convert to int
-        unique_labels = [int(label) for label in unique_labels if label > 0]
+        if not hybrid_tracking:
+            # Check if all labels in the volume are covered by the configuration
+            unique_labels = np.unique(rap_volume.data)
+            # Remove 0 (background) and convert to int
+            unique_labels = [int(label) for label in unique_labels if label > 0]
 
-        if unique_labels:
-            missing_labels = [label for label in unique_labels
-                              if str(label) not in self._propagators.keys()]
-            if missing_labels:
-                logging.warning(
-                    f"Labels {missing_labels} found in RAP volume but not in "
-                    f"methods config. Base params will be used for these labels."
-                )
+            if unique_labels:
+                missing_labels = [label for label in unique_labels
+                                  if str(label) not in self._propagators.keys()]
+                if missing_labels:
+                    logging.warning(
+                        f"Labels {missing_labels} found in RAP volume but not in "
+                        f"methods config. Base params will be used for these labels."
+                    )
 
     def rap_multistep_propagate(self, line, prev_direction):
         """
@@ -216,15 +219,27 @@ class RAPHybrid(RAPSwitch):
 
     def __init__(self, rap_volume, propagators: dict):
 
+        """
+        Parameters
+        ----------
+        rap_volume : DataVolume
+            Region-Adaptive Propagation mask.
+        propagators : dict
+            Dictionary of ODFPropagator instances or strings keyed by label (str).
+            If --in_odf is provided, contains {odf_path: propagator}
+            as default. Additional propagators are keyed by their label,
+            loaded from the 'filename' key in rap_policies.json.
+        """
+
         # Graph entries are stored as strings in the propagators dict
         # (ex. "graph.npz") while ODF propagators are stored as
-        # ODFPropagator objects
+        # ODFPropagator instances
         graph_entries = {k: v for k, v in propagators.items()
                          if isinstance(v, str)}
         odf_propagators = {k: v for k, v in propagators.items()
                            if k not in graph_entries}
 
-        super().__init__(rap_volume, odf_propagators)
+        super().__init__(rap_volume, odf_propagators, hybrid_tracking=True)
 
         # Right now we assume that only one graph is provided.
         # Multiple regions can have a graph label, as long as all
@@ -233,15 +248,15 @@ class RAPHybrid(RAPSwitch):
         self.graph_labels = {int(k) for k in graph_entries}
         graph_file = next(iter(graph_entries.values()))
 
-        self.csr, self.node_to_voxel, self.voxel_to_node, self.nodes_mask, _, self.peak_dirs = load_graph_sparse(
+        self.csr, self.node_to_voxel, self.voxel_to_node, self.nodes_mask, _, self.peak_dirs = load_graph(
             graph_file)
         
         self.exit_mask = self._get_exit_mask()
         self.perimeter_mask = self._get_perimeter_mask()
 
-        # Maps every node to its valid paths and their corresponding endpoints,
+        # Maps every node to its valid (voxel) paths and their corresponding endpoints,
         # as well as the path's strength
-        self.valid_paths = {}
+        self.valid_paths_voxel = {}
         self.valid_endpoints = {}
         self.valid_paths_strength = {}
 
@@ -251,6 +266,26 @@ class RAPHybrid(RAPSwitch):
         self.first_step_angle = np.radians(60)
 
     def rap_multistep_propagate(self, line, prev_direction):
+        """
+        Switches to graph tracking if in a graph region, delegates to 
+        RAPSwitch if not in a graph region. 
+
+        Parameters
+        ----------
+        line : list
+            The current streamline.
+        prev_direction : np.ndarray
+            The previous tracking direction.
+
+        Returns
+        -------
+        line : list
+            The extended streamline.
+        prev_direction : np.ndarray
+            The last direction.
+        is_line_valid : bool
+            Whether the line is valid.
+        """
         label = self._get_label(line[-1], self.propagator.space,
                                 self.propagator.origin)
         if label in self.graph_labels:
@@ -258,7 +293,27 @@ class RAPHybrid(RAPSwitch):
         return super().rap_multistep_propagate(line, prev_direction)
 
     def _graph_step(self, line, prev_direction):
+        """
+        Finds the shortest valid paths starting from a graph node to anywhere in the exit mask.
+        Randomly chooses one path. Paths with greater paths strenghts are more likely to be 
+        selected. 
 
+        Parameters
+        ----------
+        line : list
+            The current streamline.
+        prev_direction : np.ndarray
+            The previous tracking direction.
+
+        Returns
+        -------
+        line : list
+            The extended streamline.
+        prev_direction : np.ndarray
+            The last direction.
+        is_line_valid : bool
+            Whether the line is valid.
+        """
         pos = line[-1]
         pos_round = np.round(pos).astype(int)
         diff_pos = pos - pos_round
@@ -286,7 +341,7 @@ class RAPHybrid(RAPSwitch):
         if start_node < 0: 
             return line, prev_direction, False
         
-        candidate_paths = self.valid_paths[start_node]
+        candidate_paths = self.valid_paths_voxel[start_node]
         candidate_endpoints = self.valid_endpoints[start_node]
         path_strengths = self.valid_paths_strength[start_node]
 
@@ -307,7 +362,6 @@ class RAPHybrid(RAPSwitch):
         if len(candidate_paths) == 0:
             return line, prev_direction, False
 
-        # Sort paths according to path_strength
         path_strengths /= np.sum(path_strengths)
 
         # Randomly select a remaining path and it's corresponding endpoint
@@ -333,18 +387,29 @@ class RAPHybrid(RAPSwitch):
         return line, new_dir, True
 
     def _get_exit_mask(self):
+        """Creates a mask of all possible exits for the graph regions"""
         footprint = np.ones((5, 5, 5), dtype=bool)
         expanded_mask = binary_dilation(self.nodes_mask, structure=footprint)
         exit_mask = expanded_mask & ~self.nodes_mask
         return exit_mask
 
     def _get_perimeter_mask(self):
+        """Creates a mask of all possible entries for the graph regions"""
         footprint = np.ones((3, 3, 3), dtype=bool)
         exit_dilated = binary_dilation(self.exit_mask, structure=footprint)
         perimeter_mask = exit_dilated & self.nodes_mask
         return perimeter_mask
 
     def _precompute_valid_paths(self):
+        """        
+        Computes all valid paths starting from every node in the perimeter mask to every
+        node in the exit mask. Keeps at most the 40 "best" paths. 
+        Paths are represented as lists of voxels.
+        
+        Each path is associated to an endpoint (voxel + direction index), and a path
+        strength (float).
+
+        """
         for voxel in np.argwhere(self.perimeter_mask):
             for node in self.voxel_to_node[tuple(voxel)]:
                 if node < 0: 
@@ -361,24 +426,55 @@ class RAPHybrid(RAPSwitch):
                 for path_node in paths:
                     if path_node is None:
                         continue
-                    path_voxel_lobe = [self.node_to_voxel[p] for p in path_node]
-                    path_voxel = [p[:3] for p in path_voxel_lobe]
+                    path_voxel_with_dir_index = [self.node_to_voxel[p] for p in path_node]
+                    path_voxel = [p[:3] for p in path_voxel_with_dir_index]
                     if path_is_valid(path_voxel):
                         candidate_paths.append(np.array(path_voxel, dtype=np.float32))
-                        candidate_endpoints.append(path_voxel_lobe[-1])
+                        candidate_endpoints.append(path_voxel_with_dir_index[-1])
                         path_strengths.append(self._compute_path_strength(path_node))
 
-                self.valid_paths[node] = candidate_paths
+                self.valid_paths_voxel[node] = candidate_paths
                 self.valid_endpoints[node] = candidate_endpoints
                 self.valid_paths_strength[node] = path_strengths
 
     def _correct_path(self, path_voxel, diff):
+        """
+        Modifies the positions of all points in a path according to 
+        the distance between the streamline's last point before entering the graph 
+        region and the streamline's first point in the graph region. 
+
+        Parameters
+        ----------
+        path_voxel: np.ndarray
+            The path, represented as a list of voxels. 
+
+        Returns
+        -------
+        new_path : np.ndarray
+            The path, represented as a list of voxels, with corrected positions. 
+
+        """
         # This needs to be improved
         # This can make streamlines exit the wm mask
         new_path = [point + diff for point in path_voxel]
         return new_path
 
     def _compute_path_strength(self, path_node):
+        """
+        Computes the strength of a path. A greater value indicates 
+        a better path. 
+
+        Parameters
+        ----------
+        path_node: np.ndarray
+            The path, represented as a list of nodes. 
+
+        Returns
+        -------
+        strength : float
+            Strength of the path.
+
+        """
         edges_mult = 1
         for i in range(len(path_node) - 1):
             edges_mult *= self.csr[path_node[i], path_node[i + 1]]

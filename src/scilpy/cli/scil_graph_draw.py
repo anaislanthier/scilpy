@@ -3,8 +3,9 @@
 import argparse
 import os
 
-from scilpy.graph.io import load_graph_sparse, show_graph_2d
+from scilpy.graph.io import load_graph, show_graph_2d
 from scilpy.graph.solve import solve_dijkstra_single_path, solve_dijkstra_multiple_paths
+from scilpy.io.utils import assert_inputs_exist, assert_outputs_exist, add_overwrite_arg
 
 """
 Tool to visualize the graph constructed with
@@ -37,6 +38,9 @@ def _build_arg_parser():
         help="Save only the figure without displaying it",
         action="store_true",
     )
+    
+    add_overwrite_arg(p)
+
     return p
 
 
@@ -45,20 +49,23 @@ def main():
     args = parser.parse_args()
     output_name = os.path.basename(args.out_image)
 
-    csr, node_to_voxel, voxel_to_node, nodes_mask, _, _ = load_graph_sparse(
+    assert_inputs_exist(parser, [args.in_graph])
+    assert_outputs_exist(parser, args, args.out_image)
+
+    csr, node_to_voxel, voxel_to_node, nodes_mask, _, _ = load_graph(
         args.in_graph)
 
     if args.fig_type == 'graph':
         show_graph_2d(csr, node_to_voxel, output_name=output_name,
                       save_only=args.save_only, axis=args.axis_name)
     if args.fig_type == 'shortest_path':
-        path = solve_dijkstra_single_path(csr, node_to_voxel, voxel_to_node, nodes_mask)
+        path_node = solve_dijkstra_single_path(csr, node_to_voxel, voxel_to_node, nodes_mask)
         show_graph_2d(csr, node_to_voxel, output_name=output_name,
-                      path=path, save_only=args.save_only, axis=args.axis_name)
+                      path_node=path_node, save_only=args.save_only, axis=args.axis_name)
     if args.fig_type == 'heatmap':
-        paths = solve_dijkstra_multiple_paths(csr, node_to_voxel, voxel_to_node, nodes_mask)
+        paths_node = solve_dijkstra_multiple_paths(csr, node_to_voxel, voxel_to_node, nodes_mask)
         show_graph_2d(csr, node_to_voxel, output_name=output_name,
-                      save_only=args.save_only, axis=args.axis_name, heatmap=True, paths=paths)
+                      save_only=args.save_only, axis=args.axis_name, heatmap=True, paths_node=paths_node)
 
     print("Graph saved as " + str(output_name))
 

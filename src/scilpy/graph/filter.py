@@ -1,6 +1,6 @@
 import numpy as np
 
-def remove_orphan_nodes_sparse(csr, node_to_voxel, voxel_to_node):
+def remove_orphan_nodes(csr, node_to_voxel, voxel_to_node):
     """
     Remove nodes with no connections from a CSR sparse graph.
     Updates node_to_voxel and voxel_to_node to reflect the new node IDs.

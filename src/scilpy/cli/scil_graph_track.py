@@ -6,7 +6,7 @@ from scipy.ndimage import binary_dilation
 from dipy.io.stateful_tractogram import Origin, Space, StatefulTractogram
 from dipy.io.streamline import save_tractogram
 
-from scilpy.graph.io import load_graph_sparse
+from scilpy.graph.io import load_graph
 from scilpy.graph.solve import solve_dijkstra_multiple_paths, path_is_valid
 """
 Prototype to create streamlines from a graph.
@@ -31,7 +31,7 @@ def main():
     parser = _build_arg_parser()
     args = parser.parse_args()
 
-    csr, node_to_voxel, voxel_to_node, nodes_mask, affine, peak_dirs = load_graph_sparse(
+    csr, node_to_voxel, voxel_to_node, nodes_mask, affine, peak_dirs = load_graph(
         args.in_graph)
 
     # Create seeding and exit masks

@@ -8,7 +8,7 @@ import matplotlib.colors as mcolors
 from matplotlib.colors import LinearSegmentedColormap
 
 
-def save_graph_sparse(filename, csr, node_to_voxel, voxel_to_node, nodes_mask, affine, peak_dirs):
+def save_graph(filename, csr, node_to_voxel, voxel_to_node, nodes_mask, affine, peak_dirs):
     """
     Save a sparse graph and its node mapping arrays to a single .npz file.
 
@@ -23,7 +23,11 @@ def save_graph_sparse(filename, csr, node_to_voxel, voxel_to_node, nodes_mask, a
     voxel_to_node : np.ndarray
         Maps each voxel and direction index to a node ID (-1 if none).
     nodes_mask : 
-        this is probably temporary
+        Binary mask of which voxels are assigned to graph tracking.
+    affine : 
+        Affine of the masks used for graph tracking. 
+    peak_dirs :
+        Peak directions of nodes.
     """
     np.savez(filename,
              csr_data=csr.data,
@@ -37,7 +41,7 @@ def save_graph_sparse(filename, csr, node_to_voxel, voxel_to_node, nodes_mask, a
              peak_dirs=peak_dirs)
 
 
-def load_graph_sparse(filename):
+def load_graph(filename):
     """
     Load a sparse graph and its node mapping arrays from a single .npz file.
 
@@ -55,11 +59,11 @@ def load_graph_sparse(filename):
     voxel_to_node : np.ndarray
         Maps each voxel and direction index to a node ID (-1 if none).
     nodes_mask :
-        binary mask of which voxels are assigned to graph nodes. 
+        Binary mask of which voxels are assigned to graph tracking. 
     affine : 
-        this is temporary (probably)
+        Affine of the masks used for graph tracking. 
     peak_dirs :
-        Peak directions of nodes
+        Peak directions of nodes.
 
     """
 
@@ -74,7 +78,7 @@ def load_graph_sparse(filename):
 
     return csr, node_to_voxel, voxel_to_node, nodes_mask, affine, peak_dirs
 
-def show_graph_2d(csr, node_to_voxel, output_name, path=None, save_only=False, axis='axial', heatmap=False, paths=None):
+def show_graph_2d(csr, node_to_voxel, output_name, path_node=None, save_only=False, axis='axial', heatmap=False, paths_node=None):
     
     G = nx.from_scipy_sparse_array(csr)
     
@@ -106,12 +110,12 @@ def show_graph_2d(csr, node_to_voxel, output_name, path=None, save_only=False, a
         ax=ax)
 
     # Shortest path
-    if path is not None and heatmap is False:
-        _add_path(path, G, pos, ax)
+    if path_node is not None and heatmap is False:
+        _add_path(path_node, G, pos, ax)
 
     # Heatmap
-    if heatmap is True and paths is not None:
-        _add_heatmap(paths, G, pos, ax)
+    if heatmap is True and paths_node is not None:
+        _add_heatmap(paths_node, G, pos, ax)
     
     sm = cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
